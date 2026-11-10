@@ -1,0 +1,49 @@
+name: gaten
+
+# Vult de gaten die archief.yml laat liggen: EHRM (HUDOC) en het Hof van
+# Justitie van de EU (Cellar). EU-wetgeving en Staatsblad/Staatscourant/
+# Tractatenblad zitten al in archief.yml en worden hier niet gedubbeld.
+# Los van archief.yml, zodat beide naast elkaar kunnen draaien.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 */6 * * *"   # vangnet: pakt op wat nog ontbreekt
+
+permissions: { contents: read, actions: write }
+concurrency: { group: gaten, cancel-in-progress: false }
+
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python gaten.py prep
+      - name: Alles binnen? Dan zet de taak zichzelf uit
+        if: steps.p.outputs.shards == '[]'
+        run: gh workflow disable gaten.yml -R ${{ github.repository }}
+        env: { GH_TOKEN: "${{ github.token }}" }
+
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4        # beleefd blijven tegenover de overheids- en EU-servers
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - run: python gaten.py run ${{ matrix.shard }}
