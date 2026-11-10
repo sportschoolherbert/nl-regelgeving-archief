@@ -259,9 +259,14 @@ def plan():
 
     EU-wetgeving (Cellar), Staatsblad/Staatscourant/Tractatenblad zitten al in
     archief.yml; die hier niet nog eens downloaden.
+
+    EHRM staat standaard UIT: HUDOC's zoek-API zit achter Cloudflare en geeft
+    vanaf deze machine en vanaf GitHub-runners 403. Zet EHRM=1 om het opnieuw
+    te proberen (de code blijft erin, de shard faalt hard als het niet lukt).
     """
-    s = [f"hudoc-{y}" for y in range(1960, 2027)]
-    s += [f"cjeu-{d}" for d in range(1950, 2030, 10)]
+    s = [f"cjeu-{d}" for d in range(1950, 2030, 10)]
+    if os.environ.get("EHRM") == "1":
+        s = [f"hudoc-{y}" for y in range(1960, 2027)] + s
     return s
 
 

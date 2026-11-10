@@ -1,8 +1,9 @@
 name: gaten
 
-# Vult de gaten die archief.yml laat liggen: EHRM (HUDOC) en het Hof van
-# Justitie van de EU (Cellar). EU-wetgeving en Staatsblad/Staatscourant/
-# Tractatenblad zitten al in archief.yml en worden hier niet gedubbeld.
+# Vult de gaten die archief.yml laat liggen: het Hof van Justitie van de EU
+# (Cellar). EHRM (HUDOC) zit er ook in maar staat uit: die API zit achter
+# Cloudflare en geeft vanaf GitHub-runners 403. Zet EHRM=1 in de workflow om
+# het opnieuw te proberen.
 # Los van archief.yml, zodat beide naast elkaar kunnen draaien.
 
 on:
