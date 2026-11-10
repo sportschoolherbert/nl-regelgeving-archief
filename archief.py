@@ -17,7 +17,6 @@ RS = "https://data.rechtspraak.nl/uitspraken"
 VANDAAG = time.strftime("%Y-%m-%d")
 HOOFDMAP = "Wet- en regelgeving Nederland"
 MAPPEN = {
-    "00": "00 Index en zoeken",
     "01": "01 Internationaal en Europees recht",
     "02": "02 Nationale wetgeving",
     "03": "03 Decentrale regels (gemeenten, provincies, waterschappen)",
@@ -55,9 +54,8 @@ def plan():
     n = int(re.search(r"<numberOfRecords>(\d+)", x).group(1))
     shards += [f"cvdr-{i:02d}" for i in range(n // CVDR_TOTAAL_BLOK + 1)]
     shards += ["rs-tot1999"] + [f"rs-{y}" for y in range(2000, int(VANDAAG[:4]) + 1)]
-    shards += ["eu-verdragen"] + [f"eu-wet-{d}" for d in range(1950, 2030, 10)]
-    shards += [f"oep-{p}-{y}" for p in ("stb", "trb", "stcrt") for y in range(1995, 2027)]
-    shards += [f"hudoc-{y}" for y in range(1960, 2027)]
+    shards += list(EU_SHARDS) + ["oep-stb", "oep-trb"]
+    shards += [f"oep-stcrt-{y}" for y in range(OEP_START["stcrt"], int(VANDAAG[:4]) + 1)]
     return shards
 
 
@@ -228,83 +226,6 @@ def shard_rs(naam, max_n):
     taken = [(e.replace(":", "_") + ".xml", f"{RS}/content?id={e}") for e in eclis]
     zn = f"Rechtspraak_{jaar}.zip"
     parallel_naar_zip(zn, taken)
-    return [(zn, "04")]
-
-
-def parallel_zip_fn(zipnaam, taken, fn, threads=4):
-    """Als parallel_naar_zip, maar haalt elk item op met fn(arg) in plaats van een URL."""
-    mislukt = []; ok = 0
-    with zipfile.ZipFile(zipnaam, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        with cf.ThreadPoolExecutor(threads) as ex:
-            futs = {ex.submit(fn, arg): (naam, arg) for naam, arg in taken}
-            for i, fut in enumerate(cf.as_completed(futs), 1):
-                naam, arg = futs[fut]
-                try:
-                    data = fut.result()
-                except Exception:
-                    data = None
-                if data: z.writestr(naam, data); ok += 1
-                else: mislukt.append(str(arg))
-                if i % 2000 == 0: print(f"  {i}/{len(taken)}", flush=True)
-        z.writestr("_OVERZICHT.txt", f"Gedownload op {VANDAAG}\nGelukt: {ok}\nMislukt: {len(mislukt)}\n" +
-                   "".join(u + "\n" for u in mislukt))
-    print(f"{zipnaam}: {ok} gelukt, {len(mislukt)} mislukt", flush=True)
-    return ok, mislukt
-
-
-US = ub.sessie()
-
-
-def _eu_doc(celex):
-    return ub.eu_document(US, celex)[0]
-
-
-def shard_eu(shard, max_n):
-    """EU-recht via Cellar: verdragen (sector 1) of geldende wetgeving per decennium."""
-    if shard == "eu-verdragen":
-        celex = ub.celex_verdragen(US); zn = f"EU_verdragen_{VANDAAG}.zip"
-    else:
-        dec = shard.split("-")[-1]
-        celex = ub.celex_lijst(US, dec, alleen_geldig=os.environ.get("EU_ALLES") != "1")
-        zn = f"EU_wetgeving_{dec}_{VANDAAG}.zip"
-    if max_n: celex = celex[:max_n]
-    print(f"{shard}: {len(celex)} documenten", flush=True)
-    parallel_zip_fn(zn, [(c + ".xml", c) for c in celex], _eu_doc)
-    return [(zn, "01")]
-
-
-def shard_oep(shard, max_n):
-    """Staatsblad / Tractatenblad / Staatscourant per jaar."""
-    _, pub, jaar = shard.split("-")
-    start = 1; taken = []
-    while True:
-        blok = ub.oep_records(US, pub, jaar, start, 1000)
-        if not blok: break
-        for mid, tit, url in blok:
-            taken.append((f"{mid}_{veilig(tit, 50)}.xml", url))
-        start += len(blok)
-        if len(blok) < 1000 or (max_n and len(taken) >= max_n): break
-    if max_n: taken = taken[:max_n]
-    zn = f"OEP_{pub}_{jaar}.zip"
-    print(f"{shard}: {len(taken)} publicaties", flush=True)
-    parallel_naar_zip(zn, taken)
-    return [(zn, "01" if pub == "trb" else "02")]
-
-
-def shard_hudoc(shard, max_n):
-    """EHRM-uitspraken van een jaar via de HUDOC-API."""
-    jaar = shard.split("-")[-1]
-    ids, start = [], 0
-    while True:
-        res, totaal = ub.hudoc_ids(US, f"{jaar}-01-01", f"{jaar}-12-31", start, 500)
-        if not res: break
-        ids += [(r["columns"]["itemid"], r["columns"].get("docname", "")) for r in res]
-        start += len(res)
-        if len(res) < 500 or (max_n and len(ids) >= max_n): break
-    if max_n: ids = ids[:max_n]
-    zn = f"EHRM_{jaar}.zip"
-    print(f"{shard}: {len(ids)} uitspraken", flush=True)
-    parallel_zip_fn(zn, [(f"{i}_{veilig(n, 60)}.docx", i) for i, n in ids], lambda i: ub.hudoc_document(US, i))
     return [(zn, "04")]
 
 
@@ -492,10 +413,6 @@ def klaar(d, m, shard):
     if shard == "bwb": return d.zoek("BWB_wet_geldig_", m["02"], begint=True)
     if shard.startswith("rs-"): return d.zoek(f"Rechtspraak_{shard[3:]}.zip", m["04"])
     if shard.startswith("cvdr-"): return d.zoek(f"CVDR_lokaal_blok{int(shard[5:]):02d}_", m["03"], begint=True)
-    if shard == "eu-verdragen": return d.zoek("EU_verdragen_", None, False, True)
-    if shard.startswith("eu-wet-"): return d.zoek("EU_wetgeving_" + shard.split("-")[-1] + "_", None, False, True)
-    if shard.startswith("oep-"): return d.zoek(f"OEP_{shard.split('-')[1]}_{shard.split('-')[2]}.zip")
-    if shard.startswith("hudoc-"): return d.zoek(f"EHRM_{shard.split('-')[1]}.zip")
     if shard.startswith("fts-"):
         mp, _, naam = FTS[shard[4:]]; return d.zoek(naam, m[mp])
     if shard.startswith("eu-"): return d.zoek(f"EU_{shard[3:]}_geldig.zip", m["01"])
