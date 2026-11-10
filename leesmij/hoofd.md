@@ -15,3 +15,14 @@ Officiële open data, automatisch gedownload. Een hogere laag gaat voor een lage
 Bestanden zijn XML (het officiële formaat). Elke zip bevat `_OVERZICHT.txt` met de downloaddatum en wat eventueel niet lukte.
 Let op: dit is een momentopname. Regels veranderen dagelijks; voor de actuele tekst altijd de bron raadplegen.
 Niet inbegrepen: EU-wetgeving (EUR-Lex blokkeert automatische downloads), uitspraken van de Raad van State die niet op rechtspraak.nl staan, uitspraken van het EHRM (https://hudoc.echr.coe.int) en het Hof van Justitie EU (https://curia.europa.eu).
+
+## Zoeken
+In map 02, 03 en 04 staat per bron één zoekbestand: `Zoeken_Landelijke_regels_BWB.sqlite`, `Zoeken_Lokale_regels_CVDR.sqlite` en `Zoeken_Rechtspraak.sqlite`.
+Het zijn SQLite-databases met een zoekindex (FTS5) over de volledige tekst. Open ze met het gratis programma DB Browser for SQLite (https://sqlitebrowser.org), tabblad "SQL uitvoeren". Voorbeeld:
+
+    SELECT titel, organisatie, url, snippet(docs, 5, '[', ']', '...', 20)
+    FROM docs WHERE docs MATCH 'sportschool AND aansprakelijkheid'
+    ORDER BY rank LIMIT 20;
+
+Velden: id, soort, organisatie, titel, datum, tekst, url, zip, bestand. Zoeken mag met AND, OR, NOT, "letterlijke zin" en voorvoegsel* (bijv. `huur*`).
+Tip: zet het bestand eerst op "Offline beschikbaar" in Google Drive; de rechtspraak-database is groot.

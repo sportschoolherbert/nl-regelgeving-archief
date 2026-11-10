@@ -37,6 +37,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pip install requests
+      - name: Schijfruimte vrijmaken (zoeklaag rechtspraak wordt groot)
+        if: startsWith(matrix.shard, 'fts-')
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL; df -h /
       - run: python archief.py run ${{ matrix.shard }}
         env:
           MAPPEN: ${{ needs.prep.outputs.mappen }}
