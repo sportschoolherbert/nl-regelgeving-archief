@@ -25,7 +25,10 @@ MAPPEN = {
     "05": "05 Ongeschreven recht",
     "06": "06 Cao's en afspraken met wetskracht",
     "07": "07 Wetsgeschiedenis en literatuur",
+    "08": "08 Officiele bekendmakingen (Staatsblad, Staatscourant, Tractatenblad)",
 }
+EU_SHARDS = {"eu-1": "^1", "eu-3-19": "^319", "eu-3-200": "^3200", "eu-3-201": "^3201", "eu-3-202": "^3202"}
+OEP_START = {"stb": 1814, "trb": 1951, "stcrt": 1995}
 CVDR_TOTAAL_BLOK = 15000
 s = requests.Session(); s.headers.update(UA)
 
@@ -46,7 +49,7 @@ def haal(url, params=None, pogingen=5, bin=False):
 
 # ---------- plan ----------
 def plan():
-    shards = ["extra", "bwb"]
+    shards = ["bwb"]
     x = haal(SRU, {"operation": "searchRetrieve", "version": "1.2", "x-connection": "cvdr",
                    "maximumRecords": 1, "query": "cql.allRecords=1"})
     n = int(re.search(r"<numberOfRecords>(\d+)", x).group(1))
@@ -305,6 +308,64 @@ def shard_hudoc(shard, max_n):
     return [(zn, "04")]
 
 
+def shard_eu(naam, max_n):
+    import uitbreiding as u
+    rx = EU_SHARDS[naam]
+    q = ("PREFIX cdm: <http://publications.europa.eu/ontology/cdm#> SELECT DISTINCT ?c WHERE { "
+         "?w cdm:resource_legal_id_celex ?c . ?w cdm:resource_legal_in-force true . "
+         f'FILTER(regex(str(?c), "{rx}")) }}')
+    for i in range(4):
+        try:
+            r = s.post("https://publications.europa.eu/webapi/rdf/sparql", data={"query": q}, timeout=900,
+                       headers={"Accept": "application/sparql-results+json"})
+            celex = sorted({b["c"]["value"] for b in r.json()["results"]["bindings"]}); break
+        except Exception:
+            time.sleep(30 * (i + 1))
+    else:
+        raise RuntimeError("SPARQL faalt " + rx)
+    if max_n: celex = celex[:max_n]
+    zn = f"EU_{naam[3:]}_geldig.zip"
+    mislukt, ok = [], 0
+    with zipfile.ZipFile(zn, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        def een(c):
+            for i in range(3):
+                try:
+                    r = s.get(u.CELLAR + requests.utils.quote(c, safe=""), timeout=180, headers={"Accept": "application/xhtml+xml", "Accept-Language": "nld"})
+                    if r.status_code == 200 and len(r.content) > 400: return r.content
+                    if r.status_code in (404, 406): return None
+                except requests.RequestException:
+                    pass
+                time.sleep(5 * (i + 1))
+        with cf.ThreadPoolExecutor(4) as ex:
+            for c, data in zip(celex, ex.map(een, celex)):
+                if data: z.writestr(veilig(c) + ".xhtml", data); ok += 1
+                else: mislukt.append(c)
+        nl = chr(10)
+        z.writestr("_OVERZICHT.txt", f"Gedownload op {VANDAAG}{nl}CELEX-filter {rx}, alleen geldend{nl}Gelukt: {ok}{nl}"
+                   f"Niet beschikbaar in het Nederlands of mislukt: {len(mislukt)}{nl}" + nl.join(mislukt))
+    print(f"{zn}: {ok} gelukt, {len(mislukt)} mislukt", flush=True)
+    return [(zn, "01")]
+
+
+def shard_oep(naam, max_n):
+    import uitbreiding as u
+    delen = naam.split("-"); pub = delen[1]
+    jaren = [int(delen[2])] if len(delen) > 2 else range(OEP_START[pub], int(VANDAAG[:4]) + 1)
+    taken = []
+    for j in jaren:
+        n = u.oep_telling(s, pub, j)
+        st = 1
+        while st <= n:
+            blok = u.oep_records(s, pub, j, st, 1000)
+            if not blok: break
+            taken += [(f"{j}/{mid}.xml", url) for mid, _, url in blok]; st += len(blok)
+            if max_n and len(taken) >= max_n: break
+        if max_n and len(taken) >= max_n: taken = taken[:max_n]; break
+    zn = f"OEP_{pub}_{delen[2] if len(delen) > 2 else 'alle_jaren'}.zip"
+    parallel_naar_zip(zn, taken)
+    return [(zn, "08")]
+
+
 EXTRA = []  # EVRM, Grondwet en Statuut zitten al in de BWB-zips
 
 
@@ -332,6 +393,8 @@ def run(shard, droog, max_n):
     elif shard.startswith("cvdr-"): res = shard_cvdr(int(shard[5:]), max_n)
     elif shard.startswith("rs-"): res = shard_rs(shard, max_n)
     elif shard == "extra": res = shard_extra()
+    elif shard.startswith("eu-"): res = shard_eu(shard, max_n)
+    elif shard.startswith("oep-"): res = shard_oep(shard, max_n)
     elif shard.startswith("fts-"): res = shard_fts(shard[4:], drive, mappen)
     else: raise SystemExit("onbekende shard " + shard)
     for item in res:
@@ -348,6 +411,8 @@ FTS = {  # bron: (map, voorvoegsel zips, bestandsnaam db)
     "bwb": ("02", "BWB_", "Zoeken_Landelijke_regels_BWB.sqlite"),
     "cvdr": ("03", "CVDR_", "Zoeken_Lokale_regels_CVDR.sqlite"),
     "rs": ("04", "Rechtspraak_", "Zoeken_Rechtspraak.sqlite"),
+    "eu": ("01", "EU_", "Zoeken_EU_wetgeving.sqlite"),
+    "oep": ("08", "OEP_", "Zoeken_Officiele_bekendmakingen.sqlite"),
 }
 
 
@@ -385,7 +450,7 @@ def shard_fts(bron, drive, mappen):
         drive.download(z["id"], "tmp.zip"); rij = []
         with zipfile.ZipFile("tmp.zip") as zf:
             for b in zf.namelist():
-                if not b.endswith(".xml"): continue
+                if not b.endswith((".xml", ".xhtml")): continue
                 x = zf.read(b).decode("utf8", "ignore")
                 if bron == "rs":
                     did = b[:-4].replace("_", ":"); org = eerste(x, "creator"); soort = eerste(x, "subject")
@@ -396,6 +461,18 @@ def shard_fts(bron, drive, mappen):
                     did = b.split("_")[0]; org = ""; soort = z["name"].split("_geldig")[0][4:]
                     url = f"https://wetten.overheid.nl/{did}"; datum = eerste(x, "inwerkingtreding", "datum")
                     titel = eerste(x, "citeertitel", "intitule", "titel") or b[len(did) + 1:-4].replace("_", " ")
+                elif bron == "eu":
+                    did = re.sub(r"_(\d\d)$", r"(\1)", b[:-6]); org = "Europese Unie"; soort = z["name"][3:-11]
+                    url = f"https://eur-lex.europa.eu/legal-content/NL/TXT/?uri=CELEX:{did}"; datum = ""
+                    ti = [re.sub(r"<[^>]+>|\s+", " ", t).strip() for t in
+                          re.findall(r'class="(?:oj-)?doc-ti[^"]*"[^>]*>(.*?)</p>', x, re.S)[:3]]
+                    titel = " ".join(t for t in ti if t)[:400] or did
+                elif bron == "oep":
+                    did = b.split("/")[-1][:-4]; org = did.split("-")[0]; soort = eerste(x, "type") or org
+                    url = f"https://zoek.officielebekendmakingen.nl/{did}.html"; datum = b.split("/")[0]
+                    tt = [re.sub(r"\s+", " ", t).strip() for t in re.findall(r"<titel[^>]*>([^<]+)</titel>", x)]
+                    tt = [t for t in tt if t.upper() not in ("STAATSCOURANT", "STAATSBLAD", "TRACTATENBLAD")]
+                    titel = (tt[0] if tt else eerste(x, "intitule", "title")) or did
                 else:
                     did = b.split("/")[-1][:-4]; org = b.split("/")[0].replace("_", " "); soort = eerste(x, "type")
                     url = f"https://lokaleregelgeving.overheid.nl/{did}"; datum = eerste(x, "issued", "modified")
@@ -410,12 +487,6 @@ def shard_fts(bron, drive, mappen):
     return [(dbnaam, m)]
 
 
-def bron_klaar(d, m, bron):
-    """Alle download-shards van een bron binnen?"""
-    sh = [x for x in plan() if (x == "bwb" if bron == "bwb" else x.startswith(bron + "-"))]
-    return all(klaar(d, m, x) for x in sh)
-
-
 def klaar(d, m, shard):
     if shard == "extra": return d.zoek("00_LEESMIJ.md", m["hoofd"])
     if shard == "bwb": return d.zoek("BWB_wet_geldig_", m["02"], begint=True)
@@ -427,17 +498,22 @@ def klaar(d, m, shard):
     if shard.startswith("hudoc-"): return d.zoek(f"EHRM_{shard.split('-')[1]}.zip")
     if shard.startswith("fts-"):
         mp, _, naam = FTS[shard[4:]]; return d.zoek(naam, m[mp])
+    if shard.startswith("eu-"): return d.zoek(f"EU_{shard[3:]}_geldig.zip", m["01"])
+    if shard.startswith("oep-"):
+        de = shard.split("-"); return d.zoek(f"OEP_{de[1]}_{de[2] if len(de) > 2 else 'alle_jaren'}.zip", m["08"])
 
 
 def prep():
     d = Drive(); hoofd = d.map(HOOFDMAP)
     uit = {"hoofd": hoofd}
     for k, v in MAPPEN.items(): uit[k] = d.map(v, hoofd)
+    for item in shard_extra():  # LEESMIJ-bestanden altijd verversen (klein)
+        d.upload(item[0], uit[item[1]] if item[1] else hoofd, item[2] if len(item) > 2 else None)
     _plan = plan()
     open_ = [sh for sh in _plan if not klaar(d, uit, sh)]
     for bron in FTS:  # zoeklaag pas als alle zips van die bron er zijn
         if not klaar(d, uit, "fts-" + bron) and not any(
-                (x == "bwb" if bron == "bwb" else x.startswith(bron + "-")) for x in open_):
+                (x == "bwb" if bron == "bwb" else x.startswith(bron + "-")) for x in open_ if not x.startswith("fts-")):
             open_.append("fts-" + bron)
     gh = os.environ.get("GITHUB_OUTPUT")
     if gh:

@@ -89,7 +89,6 @@ def eu_document(s, celex):
 # ---------------- Officiele Publicaties (OEP) ----------------
 def oep_telling(s, pub, jaar):
     q = f'c.content-area=="officielepublicaties/{pub}/{jaar}"'
-    r = haal(s, OEP, timeout=60)
     r = s.get(OEP, params={"operation": "searchRetrieve", "version": "1.2",
                            "maximumRecords": 1, "query": q}, timeout=90)
     m = re.search(r"numberOfRecords>(\d+)", r.text) if r.status_code == 200 else None
