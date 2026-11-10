@@ -1,0 +1,42 @@
+name: archief
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"   # vangnet: herstart wat nog ontbreekt (bestaande zips worden overgeslagen)
+permissions: { contents: read, actions: write }
+concurrency: { group: archief, cancel-in-progress: false }
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+      mappen: ${{ steps.p.outputs.mappen }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python archief.py prep
+      - name: Alles binnen? Dan zet de taak zichzelf uit
+        if: steps.p.outputs.shards == '[]'
+        run: gh workflow disable archief.yml -R ${{ github.repository }}
+        env: { GH_TOKEN: "${{ github.token }}" }
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - run: python archief.py run ${{ matrix.shard }}
+        env:
+          MAPPEN: ${{ needs.prep.outputs.mappen }}
