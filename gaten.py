@@ -28,6 +28,7 @@ MAPPEN = {
     "05": "05 Ongeschreven recht",
     "06": "06 Cao's en afspraken met wetskracht",
     "07": "07 Wetsgeschiedenis en literatuur",
+    "08": "08 Officiele bekendmakingen (Staatsblad, Staatscourant, Tractatenblad)",
 }
 VANDAAG = time.strftime("%Y-%m-%d")
 S = requests.Session(); S.headers.update(UA)
@@ -231,6 +232,22 @@ class Drive:
         if not hoofd:
             raise SystemExit("hoofdmap niet gevonden in Drive")
         return {k: (self.zoek(v, hoofd, True) or hoofd) for k, v in MAPPEN.items()}, hoofd
+
+    def download(self, fid, pad):
+        """Haalt een bestand naar schijf; nodig om bestaande zips opnieuw te lezen."""
+        self._ververs()
+        for i in range(5):
+            try:
+                with requests.get(f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media",
+                                  headers=self.h, stream=True, timeout=600) as r:
+                    r.raise_for_status()
+                    with open(pad, "wb") as f:
+                        for b in r.iter_content(8 * 1024 * 1024):
+                            f.write(b)
+                return
+            except requests.RequestException:
+                time.sleep(20 * (i + 1))
+        raise RuntimeError("download mislukt " + pad)
 
     def upload(self, pad, ouder, naam=None):
         naam = naam or os.path.basename(pad)

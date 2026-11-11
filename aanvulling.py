@@ -22,6 +22,8 @@ import os
 import re
 import sys
 import time
+import zipfile
+import xml.etree.ElementTree as ET
 
 import requests
 
@@ -318,10 +320,125 @@ def bouw_ongeschreven(max_n):
     return "Ongeschreven_recht_kernarresten.zip", "05", rijen
 
 
+# ---------- AVV: algemeen verbindendverklaringen uit de Staatscourant ----------
+STCRT_START = 1997     # vanaf hier heeft het overheidsarchief de Staatscourant digitaal
+
+
+def titel_en_cao(tekst):
+    """(documenttitel, cao-naam) uit een gewone OEP-publicatie.
+
+    De eerste <kop><titel> in het document is de paginakop ("STAATSCOURANT"),
+    de documenttitel staat onder het eigen publicatietype. Daarom via de boom,
+    en pas als die faalt een beperkte regex.
+    """
+    titel = cao = ""
+    try:
+        root = ET.fromstring(tekst)
+    except ET.ParseError:
+        root = None
+    if root is not None:
+        for soort in ("staatscourant", "staatsblad", "tractatenblad"):
+            el = root.find(soort + "/kop/titel")
+            if el is not None and el.text:
+                titel = " ".join(el.text.split())
+                break
+        el = root.find(".//context.al")
+        if el is not None and el.text:
+            cao = " ".join(el.text.split())
+    if not titel:
+        m = re.search(r"(?:staatscourant|staatsblad|tractatenblad)>\s*<kop>\s*<titel>([^<]*)<", tekst, re.S)
+        titel = " ".join(m.group(1).split()) if m else ""
+    return titel, cao
+
+
+def avv_gegevens(tekst):
+    """(is_avv, titel, cao, datum, bron) uit een Staatscourant-document.
+
+    Tot ongeveer 2009 staat een verbindendverklaring er als eigen documenttype
+    'avvcao', met de CAO-gegevens als aparte velden. Daarna is het een gewoon
+    Staatscourant-document met 'verbindendverklaring' in de titel. Beide tellen.
+    """
+    try:
+        root = ET.fromstring(tekst)
+    except ET.ParseError:
+        root = None
+    if root is not None and root.tag == "avvcao":
+        def veld(t):
+            return " ".join((root.findtext(".//frontm/" + t) or "").split())
+        branche, soort = veld("branche"), veld("soort")
+        titel = " - ".join(x for x in (branche, soort) if x) or "Verbindendverklaring CAO"
+        bron = " ".join(x for x in ((f"CAO {veld('jaar')}").strip(), veld("caonr")) if x)
+        datum = veld("stcdat")
+        m = re.match(r"(\d{1,2})-(\d{1,2})-(\d{4})", datum)
+        if m:
+            datum = f"{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+        return True, titel, branche, datum, bron
+    titel, cao = titel_en_cao(tekst)
+    if re.search(r"verbindend\s*verklaring", titel, re.I):
+        return True, titel, cao, "", ""
+    return False, "", "", "", ""
+
+
+def bouw_avv(max_n):
+    """AVV-besluiten en -verzoeken uit onze eigen Staatscourant.
+
+    De OEP kan niet op titel zoeken (c.title bestaat niet, meldt de server),
+    maar de Staatscourant ligt hier al. Filteren op documenttype en titel is dus
+    genoeg en heeft geen enkele API-limiet.
+    """
+    d = Drive()
+    mappen, _ = d.mappen()
+    alles, rijen, per_jaar = {}, [], {}
+    for jaar in range(STCRT_START, int(time.strftime("%Y")) + 1):
+        fid = d.zoek(f"OEP_stcrt_{jaar}.zip", mappen["08"])
+        if not fid:
+            print(f"  {jaar}: geen Staatscourant in Drive, overslaan", flush=True)
+            continue
+        d.download(fid, "stcrt_jaar.zip")
+        with zipfile.ZipFile("stcrt_jaar.zip") as z:
+            for naam in z.namelist():
+                if not naam.endswith(".xml"):
+                    continue
+                data = z.read(naam)
+                if b"verbindend" not in data.lower() and b"<avvcao" not in data[:600]:
+                    continue                      # goedkoop voorfilter, scheelt veel parseerwerk
+                is_avv, titel, cao, datum, bron = avv_gegevens(data.decode("utf8", "replace"))
+                if not is_avv:
+                    continue
+                alles[naam] = data
+                nummer = naam.rsplit("/", 1)[-1].replace(".xml", "")
+                rijen.append((naam, {"id": nummer, "titel": titel,
+                                     "datum": datum or str(jaar),
+                                     "tijdschrift": bron or cao,
+                                     "url": "https://zoek.officielebekendmakingen.nl/" + nummer + ".html"}))
+                per_jaar[jaar] = per_jaar.get(jaar, 0) + 1
+        os.remove("stcrt_jaar.zip")
+        print(f"  {jaar}: {per_jaar.get(jaar, 0)} treffers", flush=True)
+        if max_n and len(rijen) >= max_n:
+            break
+
+    zn = "AVV_besluiten_stcrt.zip"
+    with zipfile.ZipFile(zn, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for naam, data in alles.items():
+            z.writestr(naam, data)
+        overzicht = (f"Algemeen verbindendverklaringen uit de Staatscourant "
+                     f"{STCRT_START}-{time.strftime('%Y')}\n"
+                     f"Verzameld op {time.strftime('%Y-%m-%d')}\n"
+                     f"Totaal: {len(alles)}\n\n"
+                     "Bevat twee soorten documenten: 'avvcao' (eigen documenttype met\n"
+                     "CAO-gegevens, tot ongeveer 2009) en gewone Staatscourant-documenten\n"
+                     "met 'verbindendverklaring' in de titel.\n\nPer jaar:\n" +
+                     "".join(f"{j}: {n}\n" for j, n in sorted(per_jaar.items())))
+        z.writestr("_OVERZICHT.txt", overzicht)
+    print(f"{zn}: {len(alles)} documenten", flush=True)
+    return zn, "06", rijen
+
+
+
 # ---------- planning ----------
 
 def plan():
-    return ["cao", "ongeschreven"] + [f"lit-{t}" for t in THEMA]
+    return ["cao", "ongeschreven", "avv"] + [f"lit-{t}" for t in THEMA]
 
 
 def zipnaam(shard):
@@ -329,6 +446,8 @@ def zipnaam(shard):
         return "CAO_sport.zip"
     if shard == "ongeschreven":
         return "Ongeschreven_recht_kernarresten.zip"
+    if shard == "avv":
+        return "AVV_besluiten_stcrt.zip"
     if shard.startswith("lit-"):
         return f"Literatuur_{shard[4:]}.zip"
     raise SystemExit("onbekende shard " + shard)
@@ -360,6 +479,8 @@ def run(shard, max_n, droog):
         zn, m, rijen = bouw_literatuur(shard[4:], max_n)
     elif shard == "ongeschreven":
         zn, m, rijen = bouw_ongeschreven(max_n)
+    elif shard == "avv":
+        zn, m, rijen = bouw_avv(max_n)
     else:
         raise SystemExit("onbekende shard " + shard)
 

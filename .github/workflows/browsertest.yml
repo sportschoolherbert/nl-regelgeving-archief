@@ -1,0 +1,17 @@
+name: browsertest
+
+# Eenmalige controle: laten Cloudflare (HUDOC) en Anubis (CAO-register) een
+# GitHub-runner door? Zo niet, dan moeten die oogsten op de laptop draaien.
+
+on:
+  workflow_dispatch:
+permissions: { contents: read }
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install playwright requests
+      - run: playwright install --with-deps chromium
+      - run: python browsertest.py
