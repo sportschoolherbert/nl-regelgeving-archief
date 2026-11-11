@@ -87,23 +87,41 @@ def eu_document(s, celex):
 
 
 # ---------------- Officiele Publicaties (OEP) ----------------
+def oep_vraag(s, params, timeout=120, pogingen=6):
+    """SRU-verzoek met herhaalpogingen.
+
+    De SRU-server sluit af en toe de verbinding zonder antwoord
+    (RemoteDisconnected). Zonder herhaling viel de hele shard om, en in het
+    slechtste geval werd een leeg antwoord als 'klaar' weggezet.
+    """
+    for i in range(pogingen):
+        try:
+            r = s.get(OEP, params=params, timeout=timeout)
+            if r.status_code == 200:
+                return r
+            print(f"  OEP {r.status_code}, opnieuw proberen", flush=True)
+        except requests.RequestException as fout:
+            print(f"  OEP {type(fout).__name__}, opnieuw proberen", flush=True)
+        time.sleep(min(120, 5 * 2 ** i))
+    raise RuntimeError("OEP blijft weigeren")
+
+
 def oep_telling(s, pub, jaar):
     q = f'c.content-area=="officielepublicaties/{pub}/{jaar}"'
-    r = s.get(OEP, params={"operation": "searchRetrieve", "version": "1.2",
-                           "maximumRecords": 1, "query": q}, timeout=90)
-    m = re.search(r"numberOfRecords>(\d+)", r.text) if r.status_code == 200 else None
-    return int(m.group(1)) if m else 0
+    r = oep_vraag(s, {"operation": "searchRetrieve", "version": "1.2",
+                      "maximumRecords": 1, "query": q}, timeout=90)
+    m = re.search(r"numberOfRecords>(\d+)", r.text)
+    if not m:
+        raise RuntimeError(f"OEP-telling onleesbaar voor {pub} {jaar}")
+    return int(m.group(1))
 
 
 def oep_records(s, pub, jaar, start, aantal):
     """Geeft (id, titel, xmlurl) voor een blok records."""
     q = f'c.content-area=="officielepublicaties/{pub}/{jaar}"'
-    r = s.get(OEP, params={"operation": "searchRetrieve", "version": "1.2",
-                           "maximumRecords": min(1000, aantal),
-                           "startRecord": start, "query": q}, timeout=120)
-    if r.status_code != 200:
-        time.sleep(3)
-        return []
+    r = oep_vraag(s, {"operation": "searchRetrieve", "version": "1.2",
+                      "maximumRecords": min(1000, aantal),
+                      "startRecord": start, "query": q}, timeout=120)
     out = []
     for rec in re.findall(r"<sru:record>.*?</sru:record>", r.text, re.S):
         mid = re.search(r"<dcterms:identifier>([^<]*)<", rec)

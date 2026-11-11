@@ -287,18 +287,25 @@ def shard_oep(naam, max_n):
     import uitbreiding as u
     delen = naam.split("-"); pub = delen[1]
     jaren = [int(delen[2])] if len(delen) > 2 else range(OEP_START[pub], int(VANDAAG[:4]) + 1)
-    taken = []
+    taken, verwacht = {}, 0
     for j in jaren:
         n = u.oep_telling(s, pub, j)
+        verwacht += n
         st = 1
         while st <= n:
             blok = u.oep_records(s, pub, j, st, 1000)
             if not blok: break
-            taken += [(f"{j}/{mid}.xml", url) for mid, _, url in blok]; st += len(blok)
+            for mid, _, url in blok:
+                taken[f"{j}/{mid}.xml"] = url
+            st += len(blok)
             if max_n and len(taken) >= max_n: break
-        if max_n and len(taken) >= max_n: taken = taken[:max_n]; break
+        if max_n and len(taken) >= max_n: break
+    # nooit een halve zip als 'klaar' wegzetten: prep kijkt alleen of het
+    # bestand bestaat, dus een stille afkapping zou ongemerkt blijven
+    if not max_n and len(taken) < verwacht:
+        raise RuntimeError(f"OEP {pub}: {len(taken)} van {verwacht} records opgehaald")
     zn = f"OEP_{pub}_{delen[2] if len(delen) > 2 else 'alle_jaren'}.zip"
-    parallel_naar_zip(zn, taken)
+    parallel_naar_zip(zn, list(taken.items()))
     return [(zn, "08")]
 
 
