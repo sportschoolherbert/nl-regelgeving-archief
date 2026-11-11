@@ -117,19 +117,31 @@ def oep_telling(s, pub, jaar):
 
 
 def oep_records(s, pub, jaar, start, aantal):
-    """Geeft (id, titel, xmlurl) voor een blok records."""
+    """Geeft (aantal_ruwe_records, [(id, titel, url, extensie), ...]) voor een blok.
+
+    Het ruwe aantal is nodig om te pagineren: niet elk record heeft een
+    XML-manifestatie, dus het aantal parseerbare records is kleiner dan het
+    aantal opgehaalde. Op het parseerbare aantal verder tellen laat de lus
+    overlappen of te vroeg stoppen.
+
+    Staatsblad en Tractatenblad van voor 1995 hebben helemaal geen XML, alleen
+    een PDF-manifestatie. Vandaar de terugval op pdf en de extensie in de tuple.
+    """
     q = f'c.content-area=="officielepublicaties/{pub}/{jaar}"'
     r = oep_vraag(s, {"operation": "searchRetrieve", "version": "1.2",
                       "maximumRecords": min(1000, aantal),
                       "startRecord": start, "query": q}, timeout=120)
+    records = re.findall(r"<sru:record>.*?</sru:record>", r.text, re.S)
     out = []
-    for rec in re.findall(r"<sru:record>.*?</sru:record>", r.text, re.S):
+    for rec in records:
         mid = re.search(r"<dcterms:identifier>([^<]*)<", rec)
         tit = re.search(r"<dcterms:title>([^<]*)<", rec)
-        url = re.search(r'itemUrl manifestation="xml">([^<]*)<', rec)
+        maten = dict(re.findall(r'itemUrl manifestation="([^"]+)">([^<]*)<', rec))
+        url = maten.get("xml") or maten.get("pdf")
         if mid and url:
-            out.append((mid.group(1), tit.group(1) if tit else "", url.group(1)))
-    return out
+            out.append((mid.group(1), tit.group(1) if tit else "", url,
+                        "xml" if maten.get("xml") else "pdf"))
+    return len(records), out
 
 
 # ---------------- EHRM (HUDOC) ----------------

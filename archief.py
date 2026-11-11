@@ -27,7 +27,7 @@ MAPPEN = {
     "08": "08 Officiele bekendmakingen (Staatsblad, Staatscourant, Tractatenblad)",
 }
 EU_SHARDS = {"eu-1": "^1", "eu-3-19": "^319", "eu-3-200": "^3200", "eu-3-201": "^3201", "eu-3-202": "^3202"}
-OEP_START = {"stb": 1814, "trb": 1951, "stcrt": 1995}
+OEP_START = {"stb": 1951, "trb": 1951, "stcrt": 1995}  # stb: SRU heeft niets van voor 1951
 CVDR_TOTAAL_BLOK = 15000
 s = requests.Session(); s.headers.update(UA)
 
@@ -54,7 +54,12 @@ def plan():
     n = int(re.search(r"<numberOfRecords>(\d+)", x).group(1))
     shards += [f"cvdr-{i:02d}" for i in range(n // CVDR_TOTAAL_BLOK + 1)]
     shards += ["rs-tot1999"] + [f"rs-{y}" for y in range(2000, int(VANDAAG[:4]) + 1)]
-    shards += list(EU_SHARDS) + ["oep-stb", "oep-trb"]
+    shards += list(EU_SHARDS) + ["oep-trb"]
+    # Staatsblad in blokken van vijf jaar: de PDF's van voor 1995 zijn samen
+    # ~13 GB en passen niet als één zip op een runner. Vanaf 1995 is het XML
+    # en klein genoeg voor één shard.
+    shards += [f"oep-stb-{j}-{min(j + 4, 1994)}" for j in range(OEP_START["stb"], 1995, 5)]
+    shards += [f"oep-stb-1995-{int(VANDAAG[:4])}"]
     shards += [f"oep-stcrt-{y}" for y in range(OEP_START["stcrt"], int(VANDAAG[:4]) + 1)]
     return shards
 
@@ -283,28 +288,45 @@ def shard_eu(naam, max_n):
     return [(zn, "01")]
 
 
+def oep_bestandsnaam(naam):
+    """OEP_stb_1951-1955.zip voor 'oep-stb-1951-1955', OEP_trb_alle_jaren.zip voor 'oep-trb'."""
+    de = naam.split("-")
+    return f"OEP_{de[1]}_{'-'.join(de[2:]) if len(de) > 2 else 'alle_jaren'}.zip"
+
+
 def shard_oep(naam, max_n):
     import uitbreiding as u
     delen = naam.split("-"); pub = delen[1]
-    jaren = [int(delen[2])] if len(delen) > 2 else range(OEP_START[pub], int(VANDAAG[:4]) + 1)
-    taken, verwacht = {}, 0
+    if len(delen) > 3:      # bereik, bijv. oep-stb-1951-1955
+        jaren = range(int(delen[2]), int(delen[3]) + 1)
+    elif len(delen) > 2:    # een enkel jaar
+        jaren = [int(delen[2])]
+    else:
+        jaren = range(OEP_START[pub], int(VANDAAG[:4]) + 1)
+    taken, verwacht, zonder_bestand = {}, 0, 0
     for j in jaren:
         n = u.oep_telling(s, pub, j)
         verwacht += n
         st = 1
         while st <= n:
-            blok = u.oep_records(s, pub, j, st, 1000)
-            if not blok: break
-            for mid, _, url in blok:
-                taken[f"{j}/{mid}.xml"] = url
-            st += len(blok)
+            ruw, blok = u.oep_records(s, pub, j, st, min(1000, n - st + 1))
+            if not ruw: break
+            for mid, _, url, ext in blok:
+                taken[f"{j}/{mid}.{ext}"] = url
+            zonder_bestand += ruw - len(blok)
+            st += ruw
             if max_n and len(taken) >= max_n: break
         if max_n and len(taken) >= max_n: break
+    if max_n: taken = dict(list(taken.items())[:max_n])
     # nooit een halve zip als 'klaar' wegzetten: prep kijkt alleen of het
     # bestand bestaat, dus een stille afkapping zou ongemerkt blijven
-    if not max_n and len(taken) < verwacht:
-        raise RuntimeError(f"OEP {pub}: {len(taken)} van {verwacht} records opgehaald")
-    zn = f"OEP_{pub}_{delen[2] if len(delen) > 2 else 'alle_jaren'}.zip"
+    if not max_n:
+        opgehaald = len(taken) + zonder_bestand
+        if opgehaald < verwacht:
+            raise RuntimeError(f"OEP {pub}: {opgehaald} van {verwacht} records opgehaald")
+        print(f"OEP {pub}: {len(taken)} bestanden, "
+              f"{zonder_bestand} records zonder XML of PDF", flush=True)
+    zn = oep_bestandsnaam(naam)
     parallel_naar_zip(zn, list(taken.items()))
     return [(zn, "08")]
 
@@ -438,8 +460,7 @@ def klaar(d, m, shard):
     if shard.startswith("fts-"):
         mp, _, naam = FTS[shard[4:]]; return d.zoek(naam, m[mp])
     if shard.startswith("eu-"): return d.zoek(f"EU_{shard[3:]}_geldig.zip", m["01"])
-    if shard.startswith("oep-"):
-        de = shard.split("-"); return d.zoek(f"OEP_{de[1]}_{de[2] if len(de) > 2 else 'alle_jaren'}.zip", m["08"])
+    if shard.startswith("oep-"): return d.zoek(oep_bestandsnaam(shard), m["08"])
 
 
 def prep():
