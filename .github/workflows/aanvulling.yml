@@ -1,0 +1,54 @@
+name: aanvulling
+
+# Vult de drie dingen die archief.yml en gaten.yml niet opleveren:
+#
+#   cao            de CAO Sport-reeks + salarisschalen + arbo-handleiding
+#   ongeschreven   de zeven kernarresten van het ongeschreven recht
+#   lit-<thema>    Nederlandstalige open-access vakliteratuur (OpenAlex)
+#
+# Los van archief.yml en gaten.yml, met eigen shards en eigen naam, zodat de
+# drie workflows naast elkaar kunnen draaien zonder elkaars werk te raken.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Optioneel: komma-lijst van shards (leeg = alles wat nog open is)"
+        required: false
+        default: ""
+
+permissions: { contents: read, actions: write }
+concurrency: { group: aanvulling, cancel-in-progress: false }
+
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python aanvulling.py prep
+        env:
+          SHARDS: ${{ github.event.inputs.shards }}
+
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 3        # OpenAlex en de repositories zijn gedeelde diensten
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - run: python aanvulling.py run ${{ matrix.shard }}
