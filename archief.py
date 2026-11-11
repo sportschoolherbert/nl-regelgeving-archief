@@ -62,13 +62,26 @@ def plan():
 # ---------- Drive ----------
 class Drive:
     def __init__(self):
+        self._ververs(forceer=True)
+
+    def _ververs(self, forceer=False):
+        """Google-toegangstokens verlopen na een uur.
+
+        Een shard die eerst lang downloadt en daarna pas uploadt kreeg een
+        401 Unauthorized bij de upload (oep-stb na 1u45m, oep-trb na 1u22m).
+        Daarom wordt het token hier elke 50 minuten vernieuwd.
+        """
+        if not forceer and time.time() < getattr(self, "_geldig_tot", 0):
+            return
         r = requests.post("https://oauth2.googleapis.com/token", data={
             "client_id": os.environ["GD_CLIENT_ID"], "client_secret": os.environ["GD_CLIENT_SECRET"],
             "refresh_token": os.environ["GD_REFRESH_TOKEN"], "grant_type": "refresh_token"}, timeout=60)
         r.raise_for_status()
         self.h = {"Authorization": "Bearer " + r.json()["access_token"]}
+        self._geldig_tot = time.time() + 3000
 
     def zoek(self, naam, ouder=None, map_=False, begint=False):
+        self._ververs()
         op = "contains" if begint else "="
         q = f"name {op} '{naam.replace(chr(39), chr(92) + chr(39))}' and trashed = false"
         if ouder: q += f" and '{ouder}' in parents"
@@ -87,6 +100,7 @@ class Drive:
         r.raise_for_status(); return r.json()["id"]
 
     def lijst(self, ouder, begint=""):
+        self._ververs()
         uit, tok = [], None
         while True:
             r = requests.get("https://www.googleapis.com/drive/v3/files", headers=self.h, timeout=60, params={
@@ -96,6 +110,7 @@ class Drive:
             if not tok: return [f for f in uit if f["name"].startswith(begint)]
 
     def download(self, fid, pad):
+        self._ververs()
         for i in range(5):
             try:
                 with requests.get(f"https://www.googleapis.com/drive/v3/files/{fid}?alt=media", headers=self.h,

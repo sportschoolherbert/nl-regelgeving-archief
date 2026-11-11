@@ -197,13 +197,24 @@ def index_van_zip(zip_pad, shard):
 # ---------- Drive ----------
 class Drive:
     def __init__(self):
+        self._ververs(forceer=True)
+
+    def _ververs(self, forceer=False):
+        """Google-toegangstokens verlopen na een uur; vernieuw ze op tijd.
+
+        Zonder dit kreeg een shard die lang downloadt een 401 bij de upload.
+        """
+        if not forceer and time.time() < getattr(self, "_geldig_tot", 0):
+            return
         r = requests.post("https://oauth2.googleapis.com/token", data={
             "client_id": os.environ["GD_CLIENT_ID"], "client_secret": os.environ["GD_CLIENT_SECRET"],
             "refresh_token": os.environ["GD_REFRESH_TOKEN"], "grant_type": "refresh_token"}, timeout=60)
         r.raise_for_status()
         self.h = {"Authorization": "Bearer " + r.json()["access_token"]}
+        self._geldig_tot = time.time() + 3000
 
     def zoek(self, naam, ouder=None, map_=False, begint=False):
+        self._ververs()
         op = "contains" if begint else "="
         veilig_naam = naam.replace("'", "\\'")
         q = f"name {op} '{veilig_naam}' and trashed = false"
