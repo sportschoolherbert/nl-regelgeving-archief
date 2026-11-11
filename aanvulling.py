@@ -226,12 +226,17 @@ def openalex(params, pogingen=8):
 
 def openalex_lijst(thema, max_n):
     filter_ = "language:nl,open_access.is_oa:true,type:article,has_fulltext:true"
-    cursor, uit = "*", []
-    while cursor and len(uit) < max_n:
+    uit, gezien, pagina = [], set(), 1
+    while len(uit) < max_n:
         j = openalex({"filter": filter_, "search": THEMA[thema], "per-page": 200,
-                      "cursor": cursor, "mailto": CONTACT})
-
-        for w in j.get("results", []):
+                      "page": pagina, "mailto": CONTACT})
+        resultaten = j.get("results", [])
+        if not resultaten:
+            break
+        for w in resultaten:
+            if w.get("id") in gezien:
+                continue
+            gezien.add(w.get("id"))
             urls = []
             if w.get("best_oa_location") and w["best_oa_location"].get("pdf_url"):
                 urls.append(w["best_oa_location"]["pdf_url"])
@@ -240,8 +245,9 @@ def openalex_lijst(thema, max_n):
                     urls.append(loc["pdf_url"])
             if urls:
                 uit.append((w, urls[:3]))
-        cursor = (j.get("meta") or {}).get("next_cursor")
-        if not j.get("results"):
+        print(f"  pagina {pagina}: {len(uit)} kandidaten", flush=True)
+        pagina += 1
+        if pagina > 48:      # OpenAlex gaat niet dieper dan 10.000 records
             break
     return uit[:max_n]
 
