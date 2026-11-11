@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 3        # OpenAlex en de repositories zijn gedeelde diensten
+      max-parallel: 2        # OpenAlex is een gedeelde dienst; drie tegelijk liep tegen de limiet
       matrix:
         shard: ${{ fromJson(needs.prep.outputs.shards) }}
     steps:

@@ -27,8 +27,9 @@ import requests
 
 from gaten import MAPPEN, Drive, haal, veilig
 
-UA = {"User-Agent": "Mozilla/5.0 (regelgeving-archief; open data)"}
+UA = {"User-Agent": "regelgeving-archief/1.0 (info@sportschool-herbert.nl)"}
 OPENALEX = "https://api.openalex.org/works"
+CONTACT = "info@sportschool-herbert.nl"
 RECHTSPRAAK = "https://data.rechtspraak.nl/uitspraken"
 S = requests.Session()
 S.headers.update(UA)
@@ -199,22 +200,36 @@ def bouw_cao(max_n):
     return "CAO_sport.zip", "06", gelukt
 
 
+def openalex(params, pogingen=8):
+    """OpenAlex met beleefd mailadres en eerlijke backoff.
+
+    Zeven literatuur-shards klopten tegelijk aan en kregen een weigering terug;
+    na drie snelle pogingen gaf het script op. Nu wordt Retry-After gerespecteerd,
+    langer doorgeprobeerd en de statuscode gemeld, zodat een volgende storing
+    meteen in het log staat.
+    """
+    for i in range(pogingen):
+        try:
+            r = S.get(OPENALEX, params=params, timeout=120)
+        except requests.RequestException as fout:
+            print(f"  netwerkfout {type(fout).__name__}, opnieuw", flush=True)
+            time.sleep(20 * (i + 1))
+            continue
+        if r.status_code == 200:
+            return r.json()
+        wacht = int(r.headers.get("Retry-After") or 0) or min(180, 20 * (i + 1))
+        print(f"  OpenAlex {r.status_code}: {r.text[:140].strip()} - {wacht}s wachten",
+              flush=True)
+        time.sleep(wacht)
+    raise RuntimeError("OpenAlex blijft weigeren: " + str(params.get("search")))
+
+
 def openalex_lijst(thema, max_n):
     filter_ = "language:nl,open_access.is_oa:true,type:article,has_fulltext:true"
     cursor, uit = "*", []
     while cursor and len(uit) < max_n:
-        for poging in range(3):
-            try:
-                r = S.get(OPENALEX, params={"filter": filter_, "search": THEMA[thema],
-                                            "per-page": 200, "cursor": cursor}, timeout=120)
-                if r.status_code == 200:
-                    j = r.json()
-                    break
-            except (requests.RequestException, ValueError):
-                pass
-            time.sleep(5 * (poging + 1))
-        else:
-            raise RuntimeError("OpenAlex faalt op " + thema)
+        j = openalex({"filter": filter_, "search": THEMA[thema], "per-page": 200,
+                      "cursor": cursor, "mailto": CONTACT})
 
         for w in j.get("results", []):
             urls = []
