@@ -1,0 +1,54 @@
+name: kst
+
+# Alle Kamerstukken (officiële bekendmakingen met publicatienaam Kamerstuk):
+# 468.414 records, elk met de xml (gestructureerde tekst) en de pdf (vastgestelde
+# weergave) die de overheid zelf in de repository publiceert. Per shard van 5000
+# stukken één zip met een index van beide sha256-hashes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Optioneel: komma-lijst van shards (kst-000), leeg = wat nog open is"
+        required: false
+        default: ""
+permissions: { contents: read }
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python kst.py prep
+        env: { SHARDS: "${{ inputs.shards }}" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kst-plan
+          path: kst_plan/
+          retention-days: 3
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kst-plan
+          path: kst_plan/
+      - run: pip install requests
+      - run: python kst.py run ${{ matrix.shard }}
