@@ -96,6 +96,8 @@ def openalex(params, pogingen=8):
             continue
         if r.status_code == 200:
             return r.json()
+        if r.status_code in (400, 401, 403):
+            raise RuntimeError(f"OpenAlex {r.status_code}: {r.text[:200]}")
         wacht = int(r.headers.get("Retry-After") or 0) or min(180, 20 * (i + 1))
         print(f"  OpenAlex {r.status_code}: {r.text[:140].strip()} - {wacht}s wachten", flush=True)
         time.sleep(wacht)
@@ -103,14 +105,16 @@ def openalex(params, pogingen=8):
 
 
 def openalex_alles(filter_, max_n=0):
-    """Alle werken bij een filter, met cursor (geen limiet van 10.000)."""
-    cursor, uit = "*", []
-    while cursor:
-        j = openalex({"filter": filter_, "per-page": 200, "cursor": cursor, "select": VELDEN})
-        uit.extend(j.get("results", []))
-        cursor = j.get("meta", {}).get("next_cursor")
-        if not j.get("results") or (max_n and len(uit) >= max_n):
+    """Alle werken bij een filter, met gewone paginering (blokken blijven ruim onder 10.000)."""
+    uit = []
+    for pagina in range(1, 51):
+        j = openalex({"filter": filter_, "per-page": 200, "page": pagina, "select": VELDEN})
+        res = j.get("results", [])
+        uit.extend(res)
+        if len(res) < 200 or (max_n and len(uit) >= max_n):
             break
+    else:
+        print("  WAARSCHUWING: 10.000-grens bereikt voor " + filter_, flush=True)
     return uit[:max_n] if max_n else uit
 
 
