@@ -64,6 +64,9 @@ ZIP_MAX = 1200 * 1024 * 1024         # daarna volgend deel
 ZIP_MAX_N = 2500
 THREADS = 8
 PER_HOST = 3
+POGINGEN = 2          # per url
+HOST_PAUZE = 0.25     # seconden tussen twee verzoeken aan dezelfde server
+RETRY_WACHT = 3       # seconden, vermenigvuldigd met pogingnummer
 
 SUBFIELD_LAW = "3308"
 CONCEPT_LAW = "C199539241"
@@ -301,7 +304,7 @@ def _host_wacht(host):
     sem.acquire()
     with _host_lock:
         nu = time.time()
-        wacht = max(0, _host_laatst.get(host, 0) + 0.25 - nu)
+        wacht = max(0, _host_laatst.get(host, 0) + HOST_PAUZE - nu)
         _host_laatst[host] = nu + wacht
     if wacht:
         time.sleep(wacht)
@@ -363,14 +366,14 @@ def haal_een(url, tmp):
 def haal_werk(w, tmp):
     reden = "geen pdf-url"
     for url, lic in kandidaten(w):
-        for poging in range(2):
+        for poging in range(POGINGEN):
             pad, n, sha = haal_een(url, tmp)
             if pad:
                 return {"pad": pad, "bytes": n, "sha": sha, "url": url, "licentie": lic}
             reden = f"{n} ({urlparse(url).netloc})"
             if n in ("robots.txt", "geen pdf", "pdf afgekapt", "te groot", "http 404", "http 403", "http 401"):
                 break
-            time.sleep(3)
+            time.sleep(RETRY_WACHT * (poging + 1))
     return {"fout": reden}
 
 
@@ -446,7 +449,14 @@ def run(shard, max_n, droog):
         print("geen Drive-sleutel: geen ontdubbeling tegen Drive, droog doorlopen", flush=True)
         droog = True
 
-    werken = werken_voor(shard, max_n)
+    if shard == "herhaal":
+        global THREADS, PER_HOST, POGINGEN, RETRY_WACHT, HOST_PAUZE
+        THREADS, PER_HOST, POGINGEN, RETRY_WACHT, HOST_PAUZE = 3, 1, 4, 30, 2.0
+        werken = herhaal_werken(d, mappen, tmp)
+        if max_n:
+            werken = werken[:max_n]
+    else:
+        werken = werken_voor(shard, max_n)
     print(f"{shard}: {len(werken)} kandidaten", flush=True)
     nieuw = []
     for w in werken:
@@ -519,6 +529,28 @@ def run(shard, max_n, droog):
     print(f"KLAAR {shard}: kandidaten={len(werken)} al_in_drive={len(werken)-len(nieuw)} "
           f"gelukt={totaal_ok} mislukt={totaal_mis}", flush=True)
     shutil.rmtree(werk, ignore_errors=True)
+
+
+# ---------- herhaalronde: alleen tijdelijke fouten (429/202) ----------
+
+def herhaal_werken(d, mappen, tmp):
+    ids = []
+    for f in drive_lijst(d, mappen["00"], "Literatuur_OA_"):
+        if not f["name"].endswith(".mislukt.csv.gz"):
+            continue
+        pad = os.path.join(tmp, "mis_" + f["id"])
+        d.download(f["id"], pad)
+        with gzip.open(pad, "rt", encoding="utf8", newline="") as fh:
+            for r in csv.DictReader(fh):
+                if re.match(r"http (429|202)(?!\d)", r["reden"]):
+                    ids.append(r["openalex_id"])
+        os.remove(pad)
+    ids = sorted(set(ids))
+    print(f"herhaal: {len(ids)} werken met 429/202 in de mislukt-lijsten", flush=True)
+    uit = []
+    for i in range(0, len(ids), 50):
+        uit += openalex_alles("openalex_id:" + "|".join(ids[i:i + 50]))
+    return uit
 
 
 # ---------- planning ----------
