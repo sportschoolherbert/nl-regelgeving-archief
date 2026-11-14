@@ -2,9 +2,12 @@
 
 Per regeling staat in de manifest.xml van repository.officiele-overheidspublicaties.nl
 elke versie die ooit gepubliceerd is, met een sha512-hashcode en de bestandsgrootte.
-Wij halen die versies op en controleren elke download tegen die hashcode. Alleen
-een bestand dat exact overeenkomt met wat KOOP publiceerde komt in de zip. Zo kan
-er niets in het archief staan dat niet de feitelijke gepubliceerde tekst is.
+Wij halen die versies op en controleren elke download. De harde controle is dat het
+bestand zichzelf intern identificeert als precies deze regeling en deze versiedatum
+(de hashcode in oude manifesten is vaak verouderd omdat KOOP bestanden opnieuw
+renderde zonder het manifest bij te werken). De ontvangen sha512 wordt altijd
+berekend en naast die uit het manifest in de index gezet, zodat het na te rekenen is.
+Alleen een bestand dat zich als de gevraagde versie identificeert komt in de zip.
 
 Bereik: 2002-heden. De BWB is in 2002 gedigitaliseerd; van voor die tijd bestaan
 geen geconsolideerde versies in de BWB (de oorspronkelijke publicatie staat wel in
@@ -12,6 +15,7 @@ het Staatsblad, map 08).
 
   python historie.py plan                 -> shardlijst
   python historie.py prep                 -> ids.json + de shards die nog open zijn
+  python historie.py manifesten           -> welke regelingen missen in de repository
   python historie.py run <shard> [--max N] [--droog]
 Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN
 """
@@ -221,16 +225,27 @@ def run(shard, max_n, droog):
     if max_n:
         mijn = mijn[:max_n]
 
-    taken, meta = [], {}
+    taken, meta, zonder = [], {}, []
     for bid in mijn:
         r = haal(f"{REPO}/bwb/{bid}/manifest.xml")
         if r is None:
-            raise RuntimeError("geen manifest voor " + bid)
+            # De SRU noemt deze regeling, maar de repository heeft er geen
+            # manifest (301 naar de root). Dat is een gat bij KOOP, geen fout van
+            # ons: vastleggen en overslaan. Komt het te vaak voor, dan is er iets
+            # structureel mis en stopt de shard.
+            zonder.append(bid)
+            continue
         for label, inw, ein, hash_, size, item in versies_uit_manifest(r.text):
             taken.append((bid, label, item, hash_))
             meta[(bid, label)] = (inw, ein, size, item)
         if len(taken) > 200000:
             break
+    if zonder:
+        print(f"{shard}: {len(zonder)} regelingen zonder manifest in de repository: "
+              + ", ".join(zonder[:10]) + (" ..." if len(zonder) > 10 else ""), flush=True)
+        if len(zonder) > max(3, 0.01 * len(mijn)):
+            raise RuntimeError(f"{len(zonder)} van {len(mijn)} regelingen zonder manifest; "
+                               "te veel om als incident te behandelen")
     print(f"{shard}: {len(mijn)} regelingen, {len(taken)} versies", flush=True)
 
     zn = zipnaam(shard)
@@ -261,6 +276,7 @@ def run(shard, max_n, droog):
                    f"Shard: {shard}\nVerzameld: {time.strftime('%Y-%m-%d')}\n"
                    f"Regelingen: {len(mijn)}\nVersies: {len(rijen)}\n"
                    f"Niet opgehaald: {len(mislukt)}\n"
+                   f"Regelingen zonder manifest in de repository: {len(zonder)}\n"
                    f"Manifest-hash klopte: {hash_ok}\n"
                    f"Manifest-hash verouderd: {hash_afwijkend}\n"
                    "\nBron van elk bestand:\n"
@@ -271,6 +287,11 @@ def run(shard, max_n, droog):
                    "Daarnaast is de sha512 uit manifest.xml vergeleken. Waar die afwijkt is het\n"
                    "manifest van KOOP verouderd (bestanden zijn opnieuw gerenderd zonder het\n"
                    "manifest bij te werken); beide hashes staan in de index, dus na te rekenen.\n"
+                   + ("" if not zonder else
+                      "\nDeze regelingen staan wel in het SRU-register maar hebben in de\n"
+                      "repository geen manifest en geen bestanden (301 naar de root). Er is dus\n"
+                      "geen tekst op te halen; ze staan hieronder zodat het gat zichtbaar blijft:\n"
+                      + "\n".join(zonder) + "\n")
                    + ("" if not mislukt else "\nNiet opgehaald:\n" + "\n".join(mislukt)))
 
     print(f"{zn}: {len(rijen)} versies, {len(mislukt)} mislukt, "
@@ -301,6 +322,57 @@ def run(shard, max_n, droog):
     os.remove(idx)
 
 
+def manifesten():
+    """Controleert voor alle regelingen of de repository een manifest heeft.
+
+    De SRU meldt een enkele regeling die in de repository helemaal ontbreekt
+    (301 naar de root). Dat mag een shard niet laten klappen, maar het moet wel
+    zichtbaar zijn. Deze controle doet dat één keer voor de hele lijst en zet het
+    resultaat in bwb_zonder_manifest.json.
+    """
+    import threading
+    lokaal = threading.local()
+
+    def sess():
+        if not hasattr(lokaal, "s"):
+            lokaal.s = requests.Session()
+            lokaal.s.headers.update({"User-Agent": "Mozilla/5.0 (regelgeving-archief; open data)"})
+        return lokaal.s
+
+    def één(bid):
+        for poging in range(4):
+            try:
+                r = sess().get(f"{REPO}/bwb/{bid}/manifest.xml", timeout=90,
+                               allow_redirects=False)
+                if r.status_code == 200 and len(r.content) > 500:
+                    return bid, ""
+                if r.status_code in (301, 302, 404):
+                    return bid, f"geen manifest ({r.status_code})"
+                if r.status_code >= 500:
+                    time.sleep(2 * (poging + 1))
+                    continue
+                return bid, f"onverwacht {r.status_code}"
+            except requests.RequestException:
+                time.sleep(2 * (poging + 1))
+        raise RuntimeError("repository blijft weigeren bij " + bid)
+
+    with open(IDS, encoding="utf8") as f:
+        ids = json.load(f)
+    weg, klaar_ = [], 0
+    with cf.ThreadPoolExecutor(24) as ex:
+        for bid, reden in ex.map(één, ids):
+            klaar_ += 1
+            if reden:
+                weg.append([bid, reden])
+            if klaar_ % 5000 == 0:
+                print(f"  {klaar_}/{len(ids)}", flush=True)
+    with open("bwb_zonder_manifest.json", "w", encoding="utf8") as f:
+        json.dump(weg, f, indent=0)
+    print(f"{len(weg)} van {len(ids)} regelingen zonder manifest")
+    for b, r in weg[:30]:
+        print("  ", b, r)
+
+
 def prep():
     ids = alle_ids()
     with open(IDS, "w", encoding="utf8") as f:
@@ -329,6 +401,8 @@ if __name__ == "__main__":
         print(json.dumps(shards()[:5]), "... totaal", len(shards()) if os.path.exists(IDS) else "?")
     elif a[0] == "prep":
         prep()
+    elif a[0] == "manifesten":
+        manifesten()
     elif a[0] == "run":
         mx = int(a[a.index("--max") + 1]) if "--max" in a else 0
         run(a[1], mx, "--droog" in a)
