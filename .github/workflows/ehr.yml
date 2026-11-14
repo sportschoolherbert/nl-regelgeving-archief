@@ -1,13 +1,14 @@
 name: ehr
 
-# EHRM-uitspraken van HUDOC, per decennium. HUDOC staat achter Cloudflare;
-# daarom een echte browser (Playwright) in plaats van requests.
+# EHRM-uitspraken van HUDOC, per jaar. HUDOC staat achter Cloudflare; daarom een
+# echte browser (Playwright) in plaats van requests. 1960-1999 is al per
+# decennium binnen; die jaren worden overgeslagen.
 
 on:
   workflow_dispatch:
     inputs:
       shards:
-        description: "Optioneel: komma-lijst van decennia (ehr-1950), leeg = wat nog open is"
+        description: "Optioneel: komma-lijst van jaren (ehr-2003), leeg = wat nog open is"
         required: false
         default: ""
 permissions: { contents: read }
@@ -18,11 +19,12 @@ env:
 jobs:
   prep:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     outputs:
       shards: ${{ steps.p.outputs.shards }}
     steps:
       - uses: actions/checkout@v4
-      - run: pip install playwright requests
+      - run: pip install requests
       - id: p
         run: python echr.py prep
         env: { SHARDS: "${{ inputs.shards }}" }
@@ -33,7 +35,7 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 10
       matrix:
         shard: ${{ fromJson(needs.prep.outputs.shards) }}
     steps:

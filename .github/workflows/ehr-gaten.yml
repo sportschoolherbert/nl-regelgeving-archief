@@ -1,0 +1,46 @@
+name: ehr-gaten
+
+# Vult de decennium-zips van 1960-1999 aan: zoekt in HUDOC welke uitspraken
+# ontbreken (de index van de zip is de lijst van wat we hebben) en haalt die op
+# in EHRM_aanvulling_<decennium>.zip.
+
+on:
+  workflow_dispatch:
+    inputs:
+      decennia:
+        description: "Komma-lijst van decennia (ehr-1990) of leeg = alle vier"
+        required: false
+        default: ""
+permissions: { contents: read }
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - id: p
+        run: |
+          if [ -z "${{ inputs.decennia }}" ]; then
+            echo 'shards=["ehr-1960","ehr-1970","ehr-1980","ehr-1990"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "shards=$(python -c "import json,sys;print(json.dumps([s.strip() for s in sys.argv[1].split(',') if s.strip()]))" "${{ inputs.decennia }}")" >> "$GITHUB_OUTPUT"
+          fi
+  gat:
+    needs: prep
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install playwright requests
+      - run: playwright install --with-deps chromium
+      - run: python echr.py gaten ${{ matrix.shard }}
