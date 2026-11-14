@@ -73,15 +73,28 @@ def haal(url, timeout=180, pogingen=5, allow_redirects=True):
 
 
 def tel(query):
-    r = S.get(SRU, params={"operation": "searchRetrieve", "version": "2.0",
-                           "query": query, "maximumRecords": 1}, timeout=300)
-    if r.status_code != 200:
+    """Aantal records voor een query, met dezelfde backoff als de downloads."""
+    laatste = ""
+    for i in range(6):
+        try:
+            r = S.get(SRU, params={"operation": "searchRetrieve", "version": "2.0",
+                                   "query": query, "maximumRecords": 1}, timeout=300)
+        except requests.RequestException as e:
+            laatste = type(e).__name__
+            time.sleep(min(60, 3 * (i + 1) ** 2))
+            continue
+        if r.status_code == 200:
+            m = re.search(r"<sru:numberOfRecords>(\d+)", r.text)
+            if m:
+                return int(m.group(1))
+            d = re.search(r"<ns3:message>([^<]+)", r.text)
+            raise RuntimeError("SRU-telling zonder aantal: " + (d.group(1) if d else query))
+        laatste = f"HTTP {r.status_code}"
+        if r.status_code in (429, 500, 502, 503, 504):
+            time.sleep(min(60, 3 * (i + 1) ** 2))
+            continue
         raise RuntimeError(f"SRU-telling mislukt ({r.status_code}): {query}")
-    m = re.search(r"<sru:numberOfRecords>(\d+)", r.text)
-    if not m:
-        d = re.search(r"<ns3:message>([^<]+)", r.text)
-        raise RuntimeError("SRU-telling zonder aantal: " + (d.group(1) if d else query))
-    return int(m.group(1))
+    raise RuntimeError(f"SRU-telling blijft mislukken ({laatste}): {query}")
 
 
 def pagina(query, start, n=1000):
