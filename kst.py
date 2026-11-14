@@ -347,6 +347,27 @@ def controleer_pdf(data):
     return ""
 
 
+def meld_mislukt(zn, mislukt):
+    """Legt vast wat een shard niet compleet heeft, zonder het werk weg te gooien.
+
+    Eén bestand van 5000 dat blijft weigeren mag een half uur oogsten niet
+    ongedaan maken. De zip gaat gewoon naar Drive; wat ontbreekt komt in een
+    apart csv-bestand in map 00 te staan, zodat het niet stil verdwijnt en
+    controle.py het kan natellen.
+    """
+    if not mislukt:
+        return None
+    pad = zn + ".mislukt.csv"
+    with open(pad, "w", encoding="utf8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["shard", "fout"])
+        for regel in mislukt:
+            w.writerow([zn.replace(".zip", ""), regel])
+    print(f"::warning::{zn}: {len(mislukt)} stukken niet compleet; "
+          f"zie {os.path.basename(pad)} in map 00", flush=True)
+    return pad
+
+
 def haal_stuk(taak):
     r, shard = taak
     uit = {"xml": None, "pdf": None, "fout": [], "controle": {}}
@@ -419,8 +440,6 @@ def run(shard, max_n, droog):
 
     print(f"{zn}: {len(rijen)} stukken, xml {met_xml}, pdf {met_pdf}, mislukt {len(mislukt)}",
           flush=True)
-    if mislukt:
-        raise RuntimeError(f"{len(mislukt)} downloads mislukt; zip niet geupload")
 
     rij = io.StringIO()
     w = csv.writer(rij)
@@ -442,6 +461,10 @@ def run(shard, max_n, droog):
     os.remove(zn)
     d.upload(idx, mappen["00"])
     os.remove(idx)
+    pad = meld_mislukt(zn, mislukt)
+    if pad:
+        d.upload(pad, mappen["00"])
+        os.remove(pad)
 
 
 if __name__ == "__main__":

@@ -226,8 +226,6 @@ def run(shard, max_n, droog):
 
     print(f"{zn}: {len(rijen)} stukken, xml {met_xml}, pdf {met_pdf}, mislukt {len(mislukt)}",
           flush=True)
-    if mislukt:
-        raise RuntimeError(f"{len(mislukt)} downloads mislukt; zip niet geupload")
 
     rij = io.StringIO()
     w = csv.writer(rij)
@@ -249,6 +247,19 @@ def run(shard, max_n, droog):
     os.remove(zn)
     d.upload(idx, mappen["00"])
     os.remove(idx)
+    if mislukt:
+        # De zip gaat toch naar Drive; wat ontbreekt staat apart in map 00,
+        # zodat het niet stil verdwijnt en later opnieuw gehaald kan worden.
+        pad = zn + ".mislukt.csv"
+        with open(pad, "w", encoding="utf8", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["shard", "fout"])
+            for regel in mislukt:
+                w.writerow([shard, regel])
+        print(f"::warning::{zn}: {len(mislukt)} stukken niet compleet; zie {pad} in map 00",
+              flush=True)
+        d.upload(pad, mappen["00"])
+        os.remove(pad)
 
 
 if __name__ == "__main__":
