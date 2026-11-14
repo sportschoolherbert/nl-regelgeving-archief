@@ -1,0 +1,51 @@
+name: historie
+
+# Alle historische versies van alle BWB-regelingen (Basiswettenbestand).
+# Elke versie komt van de manifest.xml van KOOP en wordt gecontroleerd op
+# identiteit (regeling + versiedatum). Per shard van 1500 regelingen één zip.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Optioneel: komma-lijst van shards (hist-000), leeg = wat nog open is"
+        required: false
+        default: ""
+permissions: { contents: read }
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python historie.py prep
+        env: { SHARDS: "${{ inputs.shards }}" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bwb-ids
+          path: bwb_ids.json
+          retention-days: 3
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bwb-ids
+      - run: pip install requests
+      - run: python historie.py run ${{ matrix.shard }}
