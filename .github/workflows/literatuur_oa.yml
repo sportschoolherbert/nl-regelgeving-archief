@@ -1,0 +1,50 @@
+name: literatuur_oa
+
+# Open-access vakliteratuur (recht) naar map 07 in Drive: Nederlandstalige werken in de
+# rechtsgeleerdheid en juridische tijdschriften uit NL/BE, alleen waar een open pdf bestaat.
+# Shards: nlrecht-<van>-<tot> en tijdschr-<van>-<tot> (zie literatuur_oa.py).
+# Los van archief.yml, gaten.yml en aanvulling.yml, met eigen concurrency-groep.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Optioneel: komma-lijst van shards (leeg = alles wat nog open is)"
+        required: false
+        default: ""
+
+permissions: { contents: read, actions: write }
+concurrency: { group: literatuur_oa, cancel-in-progress: false }
+
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python literatuur_oa.py prep
+        env:
+          SHARDS: ${{ github.event.inputs.shards }}
+
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - run: python literatuur_oa.py run ${{ matrix.shard }}

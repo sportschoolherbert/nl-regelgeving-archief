@@ -35,6 +35,7 @@ COLLECTIES = [
      lambda: lokaal_aantal("avv_plan")),
     ("08", "Kamerstukken", r"^Kamerstukken_deel(\d{3})\.zip$",
      lambda: lokaal_aantal("kst_plan")),
+    ("07", "open-access literatuur (OA)", r"^Literatuur_OA_.*\.zip$", None),
 ]
 
 
