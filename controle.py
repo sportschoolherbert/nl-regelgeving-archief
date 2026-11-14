@@ -1,8 +1,8 @@
 """Controle: staat alles wat we zouden moeten hebben ook echt in Drive?
 
-Per verzameling is bekend hoeveel shards er zijn (uit de shardlijst van het
-bijbehorende script). Dit script kijkt in de Drive-map en noemt precies wat
-ontbreekt en wat er onverwacht bij staat. Alleen lezen.
+Kijkt per Drive-map welke bestanden er staan, of de shardnummering aaneengesloten
+is (geen gat, geen dubbel) en of het aantal klopt met de shardlijst die lokaal
+bekend is. Alleen lezen.
 
   python controle.py
 Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN
@@ -10,56 +10,64 @@ Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN
 
 import json
 import os
+import re
 import sys
+
+import requests
 
 from gaten import Drive
 
 
-def verwacht_hist():
-    if not os.path.exists("bwb_ids.json"):
-        return None
-    with open("bwb_ids.json", encoding="utf8") as f:
-        n = len(json.load(f))
-    return [f"BWB_historie_deel{i:03d}.zip" for i in range((n + 1499) // 1500)]
-
-
-def verwacht_kst():
-    if not os.path.isdir("kst_plan"):
-        return None
-    n = len([f for f in os.listdir("kst_plan") if f.endswith(".json")])
-    return [f"Kamerstukken_deel{i:03d}.zip" for i in range(n)]
-
-
-def verwacht_avv():
-    if not os.path.isdir("avv_plan"):
-        return None
-    n = len([f for f in os.listdir("avv_plan") if f.endswith(".json")])
-    return [f"CAO_AVV_deel{i:03d}.zip" for i in range(n)]
+def lokaal_aantal(plan, ids=None, per=0):
+    if ids and os.path.exists(ids):
+        with open(ids, encoding="utf8") as f:
+            return (len(json.load(f)) + per - 1) // per
+    if plan and os.path.isdir(plan):
+        return len([f for f in os.listdir(plan) if f.endswith(".json")])
+    return None
 
 
 COLLECTIES = [
-    ("02", "historische BWB-versies", verwacht_hist),
-    ("06", "CAO's met wetskracht (AVV)", verwacht_avv),
-    ("08", "Kamerstukken", verwacht_kst),
+    ("01", "EHRM-uitspraken", r"^EHRM.*\.zip$", None),
+    ("02", "historische BWB-versies", r"^BWB_historie_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal(None, "bwb_ids.json", 1500)),
+    ("06", "CAO's met wetskracht (AVV)", r"^CAO_AVV_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal("avv_plan")),
+    ("08", "Kamerstukken", r"^Kamerstukken_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal("kst_plan")),
 ]
 
 
 def main():
     d = Drive()
     mappen, _ = d.mappen()
-    for sleutel, naam, functie in COLLECTIES:
-        wil = functie()
-        if wil is None:
-            print(f"{naam}: shardlijst ontbreekt lokaal, overgeslagen")
-            continue
-        heb = set()
-        for bestand in wil:
-            if d.zoek(bestand, mappen[sleutel]) is not None:
-                heb.add(bestand)
-        mis = [b for b in wil if b not in heb]
-        print(f"{naam}: {len(heb)} van {len(wil)} in map {sleutel}"
-              + (f", ontbreekt: {', '.join(mis[:12])}" + (" ..." if len(mis) > 12 else "")
-                 if mis else ", compleet"))
+    for sleutel, naam, patroon, aantal in COLLECTIES:
+        r = requests.get("https://www.googleapis.com/drive/v3/files", headers=d.h,
+                         params={"q": f"'{mappen[sleutel]}' in parents and trashed = false",
+                                 "fields": "files(id,name,size)", "pageSize": 1000},
+                         timeout=60)
+        r.raise_for_status()
+        bestanden = r.json()["files"]
+        passend = sorted((x for x in bestanden if re.match(patroon, x["name"])),
+                         key=lambda x: x["name"])
+        nummers = [int(m.group(1)) for x in passend
+                   if (m := re.match(patroon, x["name"])) and m.groups()]
+        gb = sum(int(x.get("size", 0)) for x in passend) / 1024 ** 3
+        wil = aantal() if aantal else None
+        regel = f"{naam}: {len(passend)} bestanden, {gb:.1f} GB in map {sleutel}"
+        if nummers:
+            gaten = [n for n in range(nummers[0], nummers[-1] + 1) if n not in nummers]
+            dubbel = sorted({n for n in nummers if nummers.count(n) > 1})
+            if gaten:
+                regel += f" | GAT: {', '.join(str(g) for g in gaten[:15])}"
+            if dubbel:
+                regel += f" | DUBBEL: {', '.join(str(x) for x in dubbel)}"
+            if wil:
+                regel += f" | verwacht {wil}" + (" — compleet" if len(passend) == wil and not gaten
+                                                 else " — NIET compleet")
+        elif wil:
+            regel += f" | verwacht {wil} — nog niets"
+        print(regel)
     return 0
 
 
