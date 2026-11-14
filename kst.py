@@ -54,12 +54,20 @@ S = requests.Session()
 S.headers.update({"User-Agent": "Mozilla/5.0 (regelgeving-archief; open data)"})
 
 
-def haal(url, timeout=180, pogingen=5, allow_redirects=True):
-    """GET met backoff. 404 geeft None; blijft het weigeren, dan een fout."""
+def haal(url, timeout=180, pogingen=6, allow_redirects=True, min_bytes=0):
+    """GET met backoff. 404 geeft None; blijft het weigeren, dan een fout.
+
+    De repository antwoordt onder belasting soms met status 200 en een body van
+    nog geen 200 bytes (een lege placeholder). Dat is geen bestand; met
+    min_bytes wordt zo'n antwoord opnieuw geprobeerd tot het echte bestand komt.
+    """
     for i in range(pogingen):
         try:
             r = S.get(url, timeout=timeout, allow_redirects=allow_redirects)
             if r.status_code == 200:
+                if len(r.content) < min_bytes:
+                    time.sleep(min(60, 3 * (i + 1) ** 2))
+                    continue
                 return r
             if r.status_code == 404:
                 return None
@@ -346,7 +354,7 @@ def haal_stuk(taak):
         url = r.get(soort) or ""
         if not url:
             continue
-        antwoord = haal(url)
+        antwoord = haal(url, min_bytes=500)
         if antwoord is None:
             uit["fout"].append(f"{soort}:404")
             continue
