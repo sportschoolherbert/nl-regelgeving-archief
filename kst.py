@@ -375,7 +375,11 @@ def haal_stuk(taak):
         url = r.get(soort) or ""
         if not url:
             continue
-        antwoord = haal(url, min_bytes=500)
+        try:
+            antwoord = haal(url, min_bytes=500)
+        except Exception as e:  # blijft weigeren: noteren, niet de hele shard laten vallen
+            uit["fout"].append(f"{soort}:{type(e).__name__}: {str(e)[:200]}")
+            continue
         if antwoord is None:
             uit["fout"].append(f"{soort}:404")
             continue
