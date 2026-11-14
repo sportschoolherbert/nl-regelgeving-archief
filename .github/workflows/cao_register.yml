@@ -1,0 +1,47 @@
+name: cao_register
+
+# CAO-register van het ministerie van SZW (cao.minszw.nl): alle aangemelde cao's en
+# sociale plannen met hun documenten. De site staat achter Anubis (proof-of-work);
+# een echte browser (Playwright) komt erdoor. Elke shard loopt een blok van 1000
+# objectnummers af, een verzoek tegelijk met korte pauzes, en max-parallel is laag
+# om de site niet te belasten. Shards die al in Drive staan worden overgeslagen.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Optioneel: komma-lijst van shards (cao-057), leeg = wat nog open is"
+        required: false
+        default: ""
+permissions: { contents: read }
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python cao_register.py prep
+        env: { SHARDS: "${{ inputs.shards }}" }
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install playwright requests
+      - run: playwright install --with-deps chromium
+      - run: python cao_register.py run ${{ matrix.shard }}

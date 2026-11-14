@@ -33,6 +33,7 @@ COLLECTIES = [
      lambda: lokaal_aantal(None, "bwb_ids.json", 1500)),
     ("06", "CAO's met wetskracht (AVV)", r"^CAO_AVV_deel(\d{3})\.zip$",
      lambda: lokaal_aantal("avv_plan")),
+    ("06", "CAO-register SZW", r"^CAO_register_deel(\d{3})\.zip$", None),
     ("08", "Kamerstukken", r"^Kamerstukken_deel(\d{3})\.zip$",
      lambda: lokaal_aantal("kst_plan")),
     ("07", "open-access literatuur (OA)", r"^Literatuur_OA_.*\.zip$", None),
