@@ -373,6 +373,9 @@ def meld_mislukt(zn, mislukt):
 # (reden "tijd") en wordt in een herhaalronde opgehaald.
 START = time.time()
 GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "300")) * 60
+# Besluit Jan 15-11-2026: de xml is de officiële tekst; de pdf (opgemaakte weergave,
+# ±6,5 GB per 5000 stukken) alleen ophalen als er geen bruikbare xml is.
+PDF_ALLEEN_ZONDER_XML = os.environ.get("KST_PDF", "alleen_zonder_xml") != "altijd"
 
 
 def haal_stuk(taak):
@@ -385,6 +388,8 @@ def haal_stuk(taak):
         url = r.get(soort) or ""
         if not url:
             continue
+        if soort == "pdf" and PDF_ALLEEN_ZONDER_XML and uit["xml"]:
+            continue  # besluit Jan 15-11: pdf alleen als de xml ontbreekt of mislukt
         try:
             antwoord = haal(url, min_bytes=500)
         except Exception as e:  # blijft weigeren: noteren, niet de hele shard laten vallen
@@ -450,6 +455,9 @@ def run(shard, max_n, droog):
                    "Elk bestand is ongewijzigd opgeslagen. De xml is gecontroleerd op goed\n"
                    "gevormdheid en op het eigen kst-nummer; de pdf op %PDF- en %%EOF. De sha256\n"
                    "van beide staat in de index, dus het is na te rekenen.\n"
+                   + ("\nPdf alleen opgenomen als de xml ontbreekt of mislukte (besluit 15-11-2026,\n"
+                      "omvang). De pdf van elk stuk is op te halen via de kolom url_pdf in de index.\n"
+                      if PDF_ALLEEN_ZONDER_XML else "")
                    + ("" if not mislukt else "\nMislukt:\n" + "\n".join(mislukt)))
 
     print(f"{zn}: {len(rijen)} stukken, xml {met_xml}, pdf {met_pdf}, mislukt {len(mislukt)}",
