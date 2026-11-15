@@ -149,6 +149,8 @@ def prep():
         d = Drive()
         mappen, _ = d.mappen()
         te_doen = [s for s in namen if not klaar(d, mappen, s)]
+    # een matrix mag hooguit 256 jobs hebben; de rest volgt in een volgende run
+    te_doen = te_doen[:250]
     gh = os.environ.get("GITHUB_OUTPUT")
     if gh:
         with open(gh, "a") as f:
