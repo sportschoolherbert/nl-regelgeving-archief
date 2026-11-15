@@ -62,6 +62,10 @@ COLLECTIES = [
      lambda: lokaal_aantal("sgd_plan")),
     ("08", "decentrale bladen (Gemeenteblad, PRB, WSB, BGR)", r"^Decentraal_.*\.zip$",
      lambda: lokaal_aantal("decentraal_plan")),
+    ("04", "Raad van State: uitspraken (niet op rechtspraak.nl)", r"^RvS_uitspraken_(\d{3})\.zip$",
+     lambda: lokaal_aantal_soort("rvs_plan", "rvs-uit")),
+    ("07", "Raad van State: adviezen", r"^RvS_adviezen_(\d{3})\.zip$",
+     lambda: lokaal_aantal_soort("rvs_plan", "rvs-adv")),
     ("07", "open-access literatuur (OA)", r"^Literatuur_OA_.*\.zip$", None),
 ]
 
