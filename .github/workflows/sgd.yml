@@ -1,0 +1,58 @@
+name: sgd
+
+# Staten-Generaal Digitaal 1814-1995 (Kamerstukken, Handelingen, Aanhangsels).
+# Per ronde een soort bestand (ocr + metadata, later evt. coordinaten, pdf, jpg).
+
+on:
+  workflow_dispatch:
+    inputs:
+      soorten:
+        description: "Soorten, komma-lijst: ocr, coordinaten, pdf, jpg"
+        required: false
+        default: "ocr"
+      shards:
+        description: "Optioneel: komma-lijst van shards (0000), leeg = wat nog open is"
+        required: false
+        default: ""
+permissions: { contents: read }
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+  SGD_SOORTEN: ${{ inputs.soorten }}
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    outputs:
+      shards: ${{ steps.p.outputs.shards }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python sgd.py prep
+        env: { SHARDS: "${{ inputs.shards }}" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sgd-plan
+          path: sgd_plan/
+          retention-days: 3
+  shard:
+    needs: prep
+    if: needs.prep.outputs.shards != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        shard: ${{ fromJson(needs.prep.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sgd-plan
+          path: sgd_plan/
+      - run: pip install requests
+      - run: python sgd.py run ${{ matrix.shard }}
+        env: { TIJDGRENS_MIN: "260" }
