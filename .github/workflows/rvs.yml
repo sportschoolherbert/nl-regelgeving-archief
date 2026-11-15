@@ -1,10 +1,9 @@
 name: rvs
 
 # Raad van State: eerst alle adviezen, dan de uitspraken die niet op rechtspraak.nl staan (html van
-# raadvanstate.nl). robots.txt vraagt crawl-delay 30 en dat respecteren we: een verbinding, 30 s
-# tussen verzoeken, een job tegelijk voor de hele site (max-parallel 1 + concurrency-groep).
-# Shards van 500 pagina's (~4,3 uur). Het schema pakt elke 6 uur de volgende open shards op tot alles
-# binnen is; als alles klaar is, is de run een no-op.
+# raadvanstate.nl). Tempo (besluit Jan): een verbinding per job, 2,5 s pauze, max-parallel 3; bij
+# 429/503 verdubbelt de pauze, bij 15 weigeringen op rij stopt de shard. Shards van 2000 pagina's.
+# Het schema pakt elke 6 uur de volgende open shards op tot alles binnen is (daarna no-op).
 
 on:
   schedule:
@@ -34,7 +33,7 @@ jobs:
       - run: pip install requests
       - id: p
         run: python rvs.py prep
-        env: { SHARDS: "${{ inputs.shards }}", RVS_PAUZE: "30" }
+        env: { SHARDS: "${{ inputs.shards }}", RVS_PAUZE: "2.5" }
       - uses: actions/upload-artifact@v4
         with:
           name: rvs-plan
@@ -47,7 +46,7 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 1
+      max-parallel: 3
       matrix:
         shard: ${{ fromJson(needs.prep.outputs.shards) }}
     steps:
@@ -58,4 +57,4 @@ jobs:
           path: rvs_plan/
       - run: pip install requests
       - run: python rvs.py run ${{ matrix.shard }}
-        env: { TIJDGRENS_MIN: "300", RVS_PAUZE: "30" }
+        env: { TIJDGRENS_MIN: "300", RVS_PAUZE: "2.5" }

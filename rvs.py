@@ -4,10 +4,11 @@ en alle gepubliceerde adviezen (wetgevingsadviezen en voorlichtingen).
 Route: de eigen zoekpagina's van raadvanstate.nl (/uitspraken/ en /adviezen/), met
 pager_rows=1000 (128 + 13 lijstpagina's) en daarna per stuk de gewone detailpagina met de volledige
 tekst. Er is geen open-data-export en geen JSON-API. robots.txt: alleen /aspx/ en export=pdf zijn verboden; die komen hier niet voor (we halen de html,
-niet de pdf-export). robots.txt vraagt crawl-delay 30 en dat wordt gerespecteerd: een verbinding,
-30 s tussen twee verzoeken (ook bij de lijstpagina's), een job tegelijk voor de hele site, en direct
-stoppen bij 15 weigeringen (403/429) op rij. Shards van 500 pagina's; de workflow loopt via een
-schedule tot alles binnen is. Volgorde: eerst de adviezen, dan de ontbrekende uitspraken.
+niet de pdf-export). robots.txt vraagt ook crawl-delay 30; Jan heeft bewust gekozen voor een
+vriendelijker maar sneller tempo: een verbinding per job, 2,5 s pauze, maximaal 3 jobs tegelijk,
+pauze verdubbelen (max 30 s) bij 429/503 en stoppen bij 15 weigeringen op rij. Shards van 2000
+pagina's; de workflow loopt via een schedule tot alles binnen is. Volgorde: eerst de adviezen,
+dan de ontbrekende uitspraken.
 
 Ontdubbelen: uitspraken met een ECLI die data.rechtspraak.nl (creator Raad van State) al kent zijn
 al in Drive map 04 en worden niet opnieuw opgehaald. Adviezen staan in zijn geheel hier; de
@@ -16,7 +17,7 @@ onder een ander kenmerk, dus die zijn niet betrouwbaar te ontdubbelen.
 
   python rvs.py prep                  -> rvs_plan/ + shards die nog open zijn
   python rvs.py run <shard>  (rvs-uit000, rvs-adv000) [--max N] [--droog]
-Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN, optioneel TIJDGRENS_MIN (300), RVS_PAUZE (30)
+Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN, optioneel TIJDGRENS_MIN (300), RVS_PAUZE (2.5)
 """
 import csv
 import gzip
@@ -37,8 +38,8 @@ from gaten import Drive
 
 BASIS = "https://www.raadvanstate.nl"
 PLAN = "rvs_plan"
-PER_SHARD = 500          # bij 30 s pauze ongeveer 4,3 uur per shard
-PAUZE = float(os.environ.get("RVS_PAUZE", "30"))
+PER_SHARD = 2000         # bij 2,5 s pauze ongeveer 2 uur per shard
+PAUZE = float(os.environ.get("RVS_PAUZE", "2.5"))
 START = time.time()
 GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "300")) * 60
 MAANDEN = {m: i for i, m in enumerate(
@@ -48,12 +49,18 @@ S.headers.update({"User-Agent": "Mozilla/5.0 (regelgeving-archief; open data)"})
 
 
 def get(url, params=None, timeout=90, pogingen=5):
+    global PAUZE
     for i in range(pogingen):
         try:
             r = S.get(url, params=params, timeout=timeout)
             if r.status_code in (200, 404):
                 return r
-            if r.status_code in (403, 429):
+            if r.status_code in (429, 503):
+                PAUZE = min(30.0, PAUZE * 2)   # site vraagt om rust: pauze verdubbelen, max 30 s
+                print(f"HTTP {r.status_code}: pauze nu {PAUZE} s", flush=True)
+                time.sleep(30)
+                continue
+            if r.status_code == 403:
                 time.sleep(30 * (i + 1))
                 continue
         except requests.RequestException:
