@@ -54,7 +54,7 @@ S = requests.Session()
 S.headers.update({"User-Agent": "Mozilla/5.0 (regelgeving-archief; open data)"})
 
 
-def haal(url, timeout=180, pogingen=6, allow_redirects=True, min_bytes=0):
+def haal(url, timeout=120, pogingen=4, allow_redirects=True, min_bytes=0):
     """GET met backoff. 404 geeft None; blijft het weigeren, dan een fout.
 
     De repository antwoordt onder belasting soms met status 200 en een body van
@@ -368,9 +368,19 @@ def meld_mislukt(zn, mislukt):
     return pad
 
 
+# GitHub breekt een job af na 6 uur. Na deze grens beginnen we niet meer aan nieuwe
+# stukken: de zip met wat binnen is gaat naar Drive, de rest komt in .mislukt.csv
+# (reden "tijd") en wordt in een herhaalronde opgehaald.
+START = time.time()
+GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "300")) * 60
+
+
 def haal_stuk(taak):
     r, shard = taak
     uit = {"xml": None, "pdf": None, "fout": [], "controle": {}}
+    if time.time() - START > GRENS_SEC:
+        uit["fout"].append("tijd: niet meer aan begonnen binnen de tijdgrens van de job")
+        return r, uit
     for soort in ("xml", "pdf"):
         url = r.get(soort) or ""
         if not url:
