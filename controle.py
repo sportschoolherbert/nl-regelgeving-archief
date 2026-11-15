@@ -48,6 +48,8 @@ COLLECTIES = [
      lambda: lokaal_aantal_soort("eucellar_plan", "com-")),
     ("01", "EU conclusies advocaten-generaal (Cellar)", r"^EU_conclusies_AG_deel(\d{3})\.zip$",
      lambda: lokaal_aantal_soort("eucellar_plan", "ag-")),
+    ("04", "Tuchtrecht", r"^Tuchtrecht_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal("tucht_plan")),
     ("07", "open-access literatuur (OA)", r"^Literatuur_OA_.*\.zip$", None),
 ]
 
