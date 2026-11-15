@@ -27,6 +27,12 @@ def lokaal_aantal(plan, ids=None, per=0):
     return None
 
 
+def lokaal_aantal_soort(plan, voorvoegsel):
+    if plan and os.path.isdir(plan):
+        return len([f for f in os.listdir(plan) if f.startswith(voorvoegsel) and f.endswith(".json")])
+    return None
+
+
 COLLECTIES = [
     ("01", "EHRM-uitspraken", r"^EHRM.*\.zip$", None),
     ("02", "historische BWB-versies", r"^BWB_historie_deel(\d{3})\.zip$",
@@ -36,6 +42,12 @@ COLLECTIES = [
     ("06", "CAO-register SZW", r"^CAO_register_deel(\d{3})(?:_[1-4])?\.zip$", None),
     ("08", "Kamerstukken", r"^Kamerstukken_deel(\d{3})\.zip$",
      lambda: lokaal_aantal("kst_plan")),
+    ("01", "EU vervallen wetgeving (Cellar)", r"^EU_vervallen_wetgeving_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal_soort("eucellar_plan", "wet-")),
+    ("01", "EU voorbereidende handelingen (Cellar)", r"^EU_voorbereidend_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal_soort("eucellar_plan", "com-")),
+    ("01", "EU conclusies advocaten-generaal (Cellar)", r"^EU_conclusies_AG_deel(\d{3})\.zip$",
+     lambda: lokaal_aantal_soort("eucellar_plan", "ag-")),
     ("07", "open-access literatuur (OA)", r"^Literatuur_OA_.*\.zip$", None),
 ]
 
