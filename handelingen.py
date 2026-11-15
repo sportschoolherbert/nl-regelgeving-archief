@@ -31,7 +31,7 @@ from gaten import Drive
 MAP = "07"
 PER_SHARD = 5000
 PLAN = "parlement_plan"
-THREADS = 6
+THREADS = 12
 SETS = {
     "h": ("Handelingen", ['w.publicatienaam=="Handelingen"']),
     "aa": ("Aanhangsel", ['w.publicatienaam=="Kamervragen (Aanhangsel)"']),

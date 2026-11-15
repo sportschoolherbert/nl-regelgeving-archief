@@ -43,7 +43,7 @@ STARTJAAR = 2013
 PER_SHARD = 30000
 LIMIET = kst.LIMIET
 PLAN = "decentraal_plan"
-THREADS = int(os.environ.get("THREADS", "12"))
+THREADS = int(os.environ.get("THREADS", "20"))
 START = time.time()
 GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "250")) * 60
 
