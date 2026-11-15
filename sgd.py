@@ -94,7 +94,7 @@ def records(query, verwacht):
         for b in blokken:
             r = parse(b)
             for soort in ("ocr", "metadata", "coordinaten", "pdf", "jpg"):
-                if soort not in SOORTEN and not (soort == "metadata" and "ocr" in SOORTEN):
+                if soort not in SOORTEN and soort != "pdf" and not (soort == "metadata" and "ocr" in SOORTEN):
                     r.pop(soort, None)
             uit.append(r)
         start += len(blokken)
@@ -243,7 +243,8 @@ def run(s, max_n, droog):
                     z.writestr(f"{r['id']}/{nm}", data)
                     tel_[soort] = tel_.get(soort, 0) + 1
                     rijen.append([r["id"], r["kamer"], r["vergaderjaar"], r["dossier"], r["datum"], r["titel"],
-                                  soort, r["basis"] + "/" + nm, len(data), hashlib.sha256(data).hexdigest()])
+                                  soort, r["basis"] + "/" + nm, len(data), hashlib.sha256(data).hexdigest(),
+                                  (r["basis"] + "/" + r["pdf"][0]) if r.get("pdf") else ""])
                 if k % 5000 == 0:
                     print(f"  {k}/{len(taken)}", flush=True)
         z.writestr("_OVERZICHT.txt",
@@ -251,13 +252,14 @@ def run(s, max_n, droog):
                    f"Shard: {s}\nVerzameld: {time.strftime('%Y-%m-%d')}\nStukken: {len(stukken)}\n"
                    f"Bestanden per soort: {tel_}\nMislukt: {len(mislukt)}\n\n"
                    "Bron: repository.overheid.nl (c.product-area==sgd), de open data achter statengeneraaldigitaal.nl.\n"
+                   "De pdf (ca. 1,6 TB in totaal) en de paginascans (jpg, ca. 0,8 TB) zijn bewust niet opgenomen; per stuk zijn ze op te halen via kolom url_pdf in de index (pdf), of voor een paginascan door in de ocr-url 'ocr/' door 'jpg/', '_tekst_' door '_' en '.xml' door '.jpg' te vervangen.\n"
                    "Bestanden ongewijzigd; xml gecontroleerd op goed gevormd, pdf op kop en einde. sha256 in de index.\n"
                    + ("" if not mislukt else "\nMislukt:\n" + "\n".join(mislukt)))
     print(f"{zn}: {tel_}, mislukt {len(mislukt)}", flush=True)
     idx = zn + ".index.csv.gz"
     with gzip.open(idx, "wt", encoding="utf8", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["id", "kamer", "vergaderjaar", "dossier", "datum", "titel", "soort", "url", "bytes", "sha256"])
+        w.writerow(["id", "kamer", "vergaderjaar", "dossier", "datum", "titel", "soort", "url", "bytes", "sha256", "url_pdf"])
         w.writerows(rijen)
     if droog:
         print(f"DROOG: {zn} {os.path.getsize(zn)/1024/1024:.1f} MB, index {os.path.getsize(idx)} bytes")
