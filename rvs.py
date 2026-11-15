@@ -3,10 +3,11 @@ en alle gepubliceerde adviezen (wetgevingsadviezen en voorlichtingen).
 
 Route: de eigen zoekpagina's van raadvanstate.nl (/uitspraken/ en /adviezen/), met
 pager_rows=1000 (128 + 13 lijstpagina's) en daarna per stuk de gewone detailpagina met de volledige
-tekst. Er is geen open-data-export en geen JSON-API. robots.txt: alleen /aspx/ en export=pdf zijn
-verboden; die komen hier niet voor (we halen de html, niet de pdf-export). robots.txt vraagt ook
-crawl-delay 30; dat is voor ~15.000 pagina's niet haalbaar, dus: een enkele verbinding per job, 2,5 s
-pauze, maximaal 3 jobs tegelijk, en direct stoppen bij aanhoudende weigering (403/429).
+tekst. Er is geen open-data-export en geen JSON-API. robots.txt: alleen /aspx/ en export=pdf zijn verboden; die komen hier niet voor (we halen de html,
+niet de pdf-export). robots.txt vraagt crawl-delay 30 en dat wordt gerespecteerd: een verbinding,
+30 s tussen twee verzoeken (ook bij de lijstpagina's), een job tegelijk voor de hele site, en direct
+stoppen bij 15 weigeringen (403/429) op rij. Shards van 500 pagina's; de workflow loopt via een
+schedule tot alles binnen is. Volgorde: eerst de adviezen, dan de ontbrekende uitspraken.
 
 Ontdubbelen: uitspraken met een ECLI die data.rechtspraak.nl (creator Raad van State) al kent zijn
 al in Drive map 04 en worden niet opnieuw opgehaald. Adviezen staan in zijn geheel hier; de
@@ -15,7 +16,7 @@ onder een ander kenmerk, dus die zijn niet betrouwbaar te ontdubbelen.
 
   python rvs.py prep                  -> rvs_plan/ + shards die nog open zijn
   python rvs.py run <shard>  (rvs-uit000, rvs-adv000) [--max N] [--droog]
-Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN, optioneel TIJDGRENS_MIN (300), RVS_PAUZE (2.5)
+Omgeving: GD_CLIENT_ID, GD_CLIENT_SECRET, GD_REFRESH_TOKEN, optioneel TIJDGRENS_MIN (300), RVS_PAUZE (30)
 """
 import csv
 import gzip
@@ -36,8 +37,8 @@ from gaten import Drive
 
 BASIS = "https://www.raadvanstate.nl"
 PLAN = "rvs_plan"
-PER_SHARD = 2000
-PAUZE = float(os.environ.get("RVS_PAUZE", "2.5"))
+PER_SHARD = 500          # bij 30 s pauze ongeveer 4,3 uur per shard
+PAUZE = float(os.environ.get("RVS_PAUZE", "30"))
 START = time.time()
 GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "300")) * 60
 MAANDEN = {m: i for i, m in enumerate(
@@ -94,7 +95,7 @@ def lijst(soort):
                         "datum": iso(d.group(1)) if d else "", "heeft_datum": bool(d)})
         print(f"  {soort} pagina {p}: {len(uit)}", flush=True)
         p += 1
-        time.sleep(1)
+        time.sleep(PAUZE)
         if len(blokken) < 1000:
             break
     return uit
@@ -136,7 +137,40 @@ def mapsleutel(shard):
     return "07" if shard.startswith("rvs-adv") else "04"
 
 
+PLANNAAM = "_rvs_plan.json.gz"
+
+
+def plan_uit_drive(d, mappen):
+    """Hergebruik het plan van een eerdere prep (max 14 dagen oud): scheelt ~1,5 uur lijstpagina's."""
+    fid = d.zoek(PLANNAAM, mappen["00"])
+    if not fid:
+        return False
+    d.download(fid, PLANNAAM)
+    with gzip.open(PLANNAAM, "rt", encoding="utf8") as f:
+        p = json.load(f)
+    os.remove(PLANNAAM)
+    if time.time() - p["gemaakt"] > 14 * 86400:
+        return False
+    os.makedirs(PLAN, exist_ok=True)
+    for f in os.listdir(PLAN):
+        os.remove(os.path.join(PLAN, f))
+    for naam, items in p["shards"].items():
+        with open(f"{PLAN}/{naam}.json", "w", encoding="utf8") as f:
+            json.dump(items, f)
+    with open(f"{PLAN}/_tellingen.json", "w") as f:
+        json.dump(p["tellingen"], f)
+    print(f"plan hergebruikt uit Drive: {len(p['shards'])} shards, {p['tellingen']}", flush=True)
+    return True
+
+
 def prep():
+    keuze = [s.strip() for s in os.environ.get("SHARDS", "").split(",") if s.strip()]
+    d = mappen = None
+    if not keuze:
+        d = Drive()
+        mappen, _ = d.mappen()
+        if plan_uit_drive(d, mappen):
+            return kies_open(d, mappen, keuze)
     bekend = rechtspraak_rvs()
     print(f"{len(bekend)} RvS-ECLI's op data.rechtspraak.nl", flush=True)
     uits = lijst("uitspraken")
@@ -154,7 +188,7 @@ def prep():
     for f in os.listdir(PLAN):
         os.remove(os.path.join(PLAN, f))
     n = 0
-    for soort, pre in (("uitspraken", "uit"), ("adviezen", "adv")):
+    for soort, pre in (("adviezen", "adv"), ("uitspraken", "uit")):
         deel = [x for x in alle if x["soort"] == soort]
         for i in range((len(deel) + PER_SHARD - 1) // PER_SHARD):
             with open(f"{PLAN}/rvs-{pre}{i:03d}.json", "w", encoding="utf8") as f:
@@ -165,14 +199,24 @@ def prep():
                    "uitspraken_ontbrekend": len(nieuw_u), "adviezen_site": len(adv),
                    "adviezen_met_tekst": len(adv_tekst)}, f)
     print(f"{len(alle)} stukken te halen, {n} shards", flush=True)
-    keuze = [s.strip() for s in os.environ.get("SHARDS", "").split(",") if s.strip()]
+    if d is not None:
+        shards = {f[:-5]: json.load(open(f"{PLAN}/{f}", encoding="utf8"))
+                  for f in os.listdir(PLAN) if f.startswith("rvs-")}
+        with gzip.open(PLANNAAM, "wt", encoding="utf8") as f:
+            json.dump({"gemaakt": time.time(), "shards": shards,
+                       "tellingen": json.load(open(f"{PLAN}/_tellingen.json"))}, f)
+        d.upload(PLANNAAM, mappen["00"])
+        os.remove(PLANNAAM)
+    kies_open(d, mappen, keuze)
+
+
+def kies_open(d, mappen, keuze):
     if keuze:
         open_ = keuze
     else:
-        d = Drive()
-        mappen, _ = d.mappen()
         open_ = []
-        for s in sorted(f[:-5] for f in os.listdir(PLAN) if f.startswith("rvs-")):
+        for s in sorted((f[:-5] for f in os.listdir(PLAN) if f.startswith("rvs-")),
+                        key=lambda n: (n.startswith("rvs-uit"), n)):
             if not d.zoek(zipnaam(s), mappen[mapsleutel(s)]):
                 open_.append(s)
     gh = os.environ.get("GITHUB_OUTPUT")
