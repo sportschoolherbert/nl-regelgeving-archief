@@ -35,12 +35,39 @@ PAUZE = 0.15            # beleefd: korte pauze tussen twee verzoeken, een verzoe
 REGISTRATIES = ("aangemelde cao", "aan- of afmelden", "cao")
 
 
+# Blokken met veel documenten (de job haalde de tijdslimiet niet) lopen als vier sub-shards
+# van 250 nummers: cao-003-1 .. cao-003-4, zip CAO_register_deel003_1.zip .. _4.zip.
+# Een blok geldt als klaar met een gewone zip OF met alle vier de sub-zips.
+SPLITSEN = {3, 15, 16, 19, 20, 23, 24, 26}
+DEEL = 4
+GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "300")) * 60   # GitHub breekt na 350 min af
+START_TIJD = time.time()
+
+
+def splits(n):
+    return [f"cao-{n:03d}-{k}" for k in range(1, DEEL + 1)]
+
+
 def shards():
-    return [f"cao-{n:03d}" for n in range((MAX_ID + BLOK - 1) // BLOK)]
+    uit = []
+    for n in range((MAX_ID + BLOK - 1) // BLOK):
+        uit += splits(n) if n in SPLITSEN else [f"cao-{n:03d}"]
+    return uit
 
 
 def zipnaam(shard):
-    return f"CAO_register_deel{int(shard.split('-')[1]):03d}.zip"
+    d = shard.split("-")
+    return f"CAO_register_deel{int(d[1]):03d}" + (f"_{d[2]}" if len(d) > 2 else "") + ".zip"
+
+
+def bereik(shard):
+    d = shard.split("-")
+    n = int(d[1])
+    if len(d) > 2:
+        w = BLOK // DEEL
+        van = n * BLOK + (int(d[2]) - 1) * w
+        return van, min(van + w, MAX_ID)
+    return n * BLOK, min((n + 1) * BLOK, MAX_ID)
 
 
 def schoon(t):
@@ -174,8 +201,7 @@ def bestandsnaam(naam):
 
 
 def run(shard, max_n, droog):
-    blok = int(shard.split("-")[1])
-    van, tot = blok * BLOK, min((blok + 1) * BLOK, MAX_ID)
+    van, tot = bereik(shard)
     p, b, ctx, pg = browser()
     rijen, mislukt, gezien, toegankelijk, objecten = [], [], 0, 0, 0
     zn = zipnaam(shard)
@@ -184,6 +210,11 @@ def run(shard, max_n, droog):
         with zipfile.ZipFile(zn, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
             for oid in range(van, tot):
                 if max_n and gezien >= max_n:
+                    break
+                if time.time() - START_TIJD > GRENS_SEC:
+                    # tijdgrens: niet meer aan nieuwe objecten beginnen; rest komt in .mislukt.csv
+                    mislukt.append((oid, "", f"tijd: nummers {oid} t/m {tot - 1} niet meer aan begonnen"))
+                    print(f"  tijdgrens bereikt bij {oid}", flush=True)
                     break
                 gezien += 1
                 h = detail(pg, oid)
@@ -284,6 +315,9 @@ def prep():
         d = Drive()
         mappen, _ = d.mappen()
         open_ = [s for s in shards() if d.zoek(zipnaam(s), mappen[MAP]) is None]
+        # een gewone zip van een gesplitst blok telt ook als klaar
+        open_ = [s for s in open_ if len(s.split("-")) < 3 or
+                 d.zoek(zipnaam("-".join(s.split("-")[:2])), mappen[MAP]) is None]
     gh = os.environ.get("GITHUB_OUTPUT")
     if gh:
         with open(gh, "a") as f:

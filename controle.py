@@ -33,7 +33,7 @@ COLLECTIES = [
      lambda: lokaal_aantal(None, "bwb_ids.json", 1500)),
     ("06", "CAO's met wetskracht (AVV)", r"^CAO_AVV_deel(\d{3})\.zip$",
      lambda: lokaal_aantal("avv_plan")),
-    ("06", "CAO-register SZW", r"^CAO_register_deel(\d{3})\.zip$", None),
+    ("06", "CAO-register SZW", r"^CAO_register_deel(\d{3})(?:_[1-4])?\.zip$", None),
     ("08", "Kamerstukken", r"^Kamerstukken_deel(\d{3})\.zip$",
      lambda: lokaal_aantal("kst_plan")),
     ("07", "open-access literatuur (OA)", r"^Literatuur_OA_.*\.zip$", None),
@@ -59,7 +59,18 @@ def main():
         regel = f"{naam}: {len(passend)} bestanden, {gb:.1f} GB in map {sleutel}"
         if nummers:
             gaten = [n for n in range(nummers[0], nummers[-1] + 1) if n not in nummers]
-            dubbel = sorted({n for n in nummers if nummers.count(n) > 1})
+            if sleutel == "06" and "register" in naam:
+                # gesplitste blokken (deelNNN_1..4): de vier delen horen bij een nummer; dubbel = gewone zip + delen
+                namen = [x["name"] for x in passend]
+                dubbel = sorted({n for n in nummers if f"CAO_register_deel{n:03d}.zip" in namen
+                                 and any(f"CAO_register_deel{n:03d}_{k}.zip" in namen for k in range(1, 5))})
+                onvol = sorted(n for n in set(nummers) if f"CAO_register_deel{n:03d}.zip" not in namen
+                               and sum(f"CAO_register_deel{n:03d}_{k}.zip" in namen for k in range(1, 5)) not in (0, 4))
+                if onvol:
+                    regel += f" | ONVOLLEDIG GESPLITST: {', '.join(str(x) for x in onvol)}"
+                nummers = sorted(set(nummers))
+            else:
+                dubbel = sorted({n for n in nummers if nummers.count(n) > 1})
             if gaten:
                 regel += f" | GAT: {', '.join(str(g) for g in gaten[:15])}"
             if dubbel:
