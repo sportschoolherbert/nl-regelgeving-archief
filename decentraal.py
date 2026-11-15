@@ -244,7 +244,7 @@ def run(shard, max_n, droog):
                    f"Verzameld: {time.strftime('%Y-%m-%d')}\nRecords in SRU: {totaal}\n"
                    f"Unieke stukken: {len(recs)}\nXml-bestanden: {met_xml}\nPdf-bestanden: {met_pdf}\n"
                    f"Mislukt: {len(mislukt)}\n"
-                   + ("Pdf's van dit blad zijn niet opgenomen (omvang).\n" if pub not in PDF_PUBS else "")
+                   + ("De pdf-weergave van het Gemeenteblad is bewust niet opgenomen (omvang ca. 1,4 TB); per stuk op te halen via de kolom url_pdf in de index.\n" if pub not in PDF_PUBS else "")
                    + "\nBron van elk bestand: de manifestatie-url's uit het SRU-record van\n"
                      "repository.overheid.nl (frbr/officielepublicaties/<blad>/<jaar>/<id>/<versie>/...).\n"
                      "Bestanden ongewijzigd; de xml is gecontroleerd op goede vorming en het eigen nummer,\n"
