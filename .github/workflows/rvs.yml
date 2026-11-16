@@ -6,8 +6,6 @@ name: rvs
 # Het schema pakt elke 6 uur de volgende open shards op tot alles binnen is (daarna no-op).
 
 on:
-  schedule:
-    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       shards:

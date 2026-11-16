@@ -1,0 +1,57 @@
+name: bijwerken
+
+# Wekelijks bijwerken (besluit Jan 16-11-2026): per bron alles wat sinds de vorige gelukte run
+# nieuw of gewijzigd is, in een eigen zip met datum naast de oogst. De stand per bron staat in
+# Drive (map 00, _bijwerk_stand_<bron>.json) en schuift pas op na een gelukte upload; een gemiste
+# week wordt dus vanzelf ingehaald. Mislukte stukken worden de volgende runs opnieuw geprobeerd.
+# Open vakliteratuur alleen in de eerste week van de maand. Zie bijwerken.py.
+
+on:
+  schedule:
+    - cron: "17 2 * * 0"     # zondag 02:17 UTC
+  workflow_dispatch:
+    inputs:
+      alleen:
+        description: "Optioneel: komma-lijst van bronnen (bv. kamerstukken,rechtspraak), leeg = volgens schema"
+        required: false
+        default: ""
+      droog:
+        description: "Droog: alleen tellen en zip maken, niets uploaden"
+        type: boolean
+        default: false
+permissions: { contents: read }
+concurrency:
+  group: bijwerken
+  cancel-in-progress: false
+env:
+  GD_CLIENT_ID: ${{ secrets.GD_CLIENT_ID }}
+  GD_CLIENT_SECRET: ${{ secrets.GD_CLIENT_SECRET }}
+  GD_REFRESH_TOKEN: ${{ secrets.GD_REFRESH_TOKEN }}
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      bronnen: ${{ steps.p.outputs.bronnen }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - id: p
+        run: python bijwerken.py plan
+        env: { ALLEEN: "${{ inputs.alleen }}" }
+  bron:
+    needs: plan
+    if: needs.plan.outputs.bronnen != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        bron: ${{ fromJson(needs.plan.outputs.bronnen) }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install -r bijwerken_requirements.txt
+      - run: playwright install --with-deps chromium
+      - run: python bijwerken.py run ${{ matrix.bron }} ${{ inputs.droog && '--droog' || '' }}
+        env: { TIJDGRENS_MIN: "300" }
