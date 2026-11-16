@@ -38,7 +38,7 @@ REGISTRATIES = ("aangemelde cao", "aan- of afmelden", "cao")
 # Blokken met veel documenten (de job haalde de tijdslimiet niet) lopen als vier sub-shards
 # van 250 nummers: cao-003-1 .. cao-003-4, zip CAO_register_deel003_1.zip .. _4.zip.
 # Een blok geldt als klaar met een gewone zip OF met alle vier de sub-zips.
-SPLITSEN = {3, 15, 16, 19, 20, 23, 24, 26}
+SPLITSEN = {3, 15, 16, 19, 20, 23, 24, 26, 28, 41, 51, 52, 55, 57, 63, 67}   # 16-11: 28..67 braken op de 6-uursgrens (oude code)
 DEEL = 4
 GRENS_SEC = int(os.environ.get("TIJDGRENS_MIN", "300")) * 60   # GitHub breekt na 350 min af
 START_TIJD = time.time()
